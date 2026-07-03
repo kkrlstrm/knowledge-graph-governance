@@ -5,13 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "knowledge-graph-governance"
 version = "0.1.0"
-description = "A governed write-path for knowledge graphs: validate every write against a controlled vocabulary, refuse implicit node creation, version beliefs, and keep a tamper-evident audit."
+description = "The deterministic write gate for agent-managed knowledge graphs. Let LLMs propose graph updates; only validated, versioned, provenance-stamped writes reach the graph."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 authors = [{ name = "Kai Karlstrom" }]
-keywords = ["knowledge-graph", "governance", "ontology", "controlled-vocabulary",
-            "provenance", "audit", "llm", "agent", "graph", "gtm"]
+keywords = ["knowledge-graph", "ai-agents", "agent-memory", "llm", "graphrag",
+            "write-gate", "controlled-vocabulary", "provenance", "audit", "governance"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
