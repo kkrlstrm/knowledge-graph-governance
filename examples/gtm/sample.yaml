@@ -1,0 +1,58 @@
+# A worked ingest against the GTM schema. Everything here is fictional
+# (Acme Robotics / Globex are placeholder companies) — it exists to show the
+# shape, not to carry real data.
+#
+#   kgg ingest examples/gtm/sample.yaml --schema examples/gtm/schema.yaml \
+#       --backend sqlite:./demo.db --apply
+
+schema: gtm
+scope: Northwind Analytics        # the seller whose GTM these observations inform
+source: Q3 discovery calls + win/loss review
+date: 2026-07-03
+
+# Closed kinds must be declared explicitly — a stray reference can't create them.
+declare:
+  entity:
+    - { name: Acme Robotics }
+    - { name: Globex }
+  persona:
+    - { name: Chief Revenue Officer }
+    - { name: VP Engineering }
+
+nodes:
+  insight:
+    - tag: acme_new_cro_first_60_days
+      category: signal.new_hire
+      statement: >
+        Acme Robotics hired a new CRO three weeks ago. New revenue leaders in
+        their first 60 days are the highest-conversion buying signal we track.
+      entities: [Acme Robotics]
+      personas: [Chief Revenue Officer]
+      evidence_strength: 5
+
+    - tag: champion_below_budget_holder_stall
+      category: stakeholder.budget_gatekeeper_above_champion
+      statement: >
+        Technical champions stall at final sign-off when budget authority sits a
+        level above them. Deals need a champion-armed one-pager for the budget
+        holder in week one.
+      entities: [Globex]
+      personas: [VP Engineering]
+      evidence_strength: 4
+
+    - tag: no_links_cold_email_lift
+      category: outreach.no_links_for_deliverability
+      statement: >
+        Cold emails with zero links landed measurably better; the asset offer
+        became the reply hook instead of an inline link.
+      evidence_strength: 3
+
+# An observation with no controlled-vocabulary home is held for review, never
+# force-fit into a category that doesn't apply.
+unmapped_for_review:
+  - tag: buyers_asking_for_ai_governance_clause
+    kind: insight
+    statement: >
+      Two buyers asked us to add an AI-governance clause to the MSA. Novel — no
+      existing category fits.
+    note: candidate for a new procurement.* term if it recurs

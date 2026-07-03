@@ -1,0 +1,66 @@
+# A universal GTM taxonomy — a starter ontology for a go-to-market knowledge
+# graph that applies to nearly any B2B revenue organization. Seven categories of
+# durable, transferable GTM patterns; the definitions are deliberately
+# org-agnostic. Fork and extend it; every term you add is a reviewable diff, and
+# an insight tagged with a term not defined here is BLOCKed (no taxonomy drift).
+
+categories:
+
+  Buying Signals:      # external, time-bound events that precede a purchase
+    signal.new_hire: "A new leader in the buyer role (typically within ~60 days) — the highest-conversion timing signal in most corpora."
+    signal.contract_expiration: "A known incumbent-contract end date that structures outreach timing."
+    signal.org_change: "Leadership change, reorg, M&A, or rebrand that reopens vendor decisions."
+    signal.funding_or_budget_release: "A raise, grant, or fresh budget line that creates a time-bound buying window."
+    signal.regulatory_mandate: "A new rule or standard that creates compliance urgency and a budget justification."
+    signal.public_data_trigger: "Public performance/outcome data that signals dissatisfaction or unmet need."
+    signal.competitor_sunset: "An incumbent product being deprecated or sunset — a displacement opening."
+    signal.expansion_or_hiring_surge: "Headcount growth or new locations that expand the account's need."
+
+  Stakeholder Dynamics:      # who actually buys
+    stakeholder.true_dm_vs_apparent_dm: "The org-chart-obvious title is not the real decision-maker."
+    stakeholder.budget_gatekeeper_above_champion: "The champion sits one level below the person who controls budget."
+    stakeholder.bottom_up_champion_motion: "End-user discovery grows into a champion, then to the economic buyer."
+    stakeholder.committee_buying: "Multi-stakeholder approval is required, not optional."
+    stakeholder.gatekeeper_block: "Assistants or front-line staff structurally block access to the buyer."
+    stakeholder.fragmented_title_problem: "The buyer's title varies widely across accounts, breaking standard search."
+    stakeholder.persona_unreachable_by_channel: "A persona is structurally unavailable on a given channel."
+
+  Buying Mechanics:      # how the organization buys
+    procurement.fiscal_year_boundary: "A hard fiscal cutoff structures urgency and follow-up timing."
+    procurement.rfp_threshold_trigger: "Above a price/spend threshold the deal flips into a formal RFP."
+    procurement.centralized_purchasing_intermediary: "A co-op, GPO, or parent org centralizes buying for many sub-orgs."
+    procurement.payment_method_signals_buyer_type: "Card vs. PO/invoice indicates an individual vs. institutional buyer."
+    procurement.land_and_expand_motion: "Low-friction entry below the procurement threshold, expand later."
+    procurement.compliance_gate: "Procurement requires a prerequisite (security review, certification, integration)."
+    procurement.acv_band_by_segment: "Realistic deal-size bands vary by segment and inform forecasting."
+
+  Objections & Counter-plays:
+    objection.budget: "Budget is the stated blocker."
+    objection.under_contract: "The prospect deflects with a multi-year incumbent contract."
+    objection.free_alternative_disqualifier: "A no-cost alternative makes paid conversion structurally hard."
+    objection.status_quo_inertia: "'Good enough today' — no compelling event to change."
+    objection.brand_unknown: "The prospect doesn't know the vendor exists or questions if it's real."
+    counter.objection_to_signal_flip: "Reframe a stated objection as a qualifying buying signal."
+
+  Outreach Tactics:      # channel, copy, and send mechanics
+    outreach.use_case_subject_line: "A narrow use-case framing in the subject beats category framing."
+    outreach.reference_proximity_lift: "Naming a comparable/nearby reference customer lifts reply rate."
+    outreach.no_links_for_deliverability: "Cold emails with no links land better; the asset offer is the reply hook."
+    outreach.blank_connection_request: "A message-free connection request outperforms one with a pitch."
+    outreach.pre_event_campaign: "Pre-event outreach plus on-site follow-up concentrates response."
+    outreach.multithread_motion: "Engaging several stakeholders in parallel beats single-threading the champion."
+    outreach.value_prop_seasonal_rotation: "Rotate the value proposition seasonally without rotating the persona."
+    outreach.thought_leader_anchor: "Third-party validation or thought-leadership credibility lifts response."
+
+  Timing & Seasonality:
+    seasonality.persona_blackout: "A persona is structurally off-limits during a known window."
+    seasonality.fiscal_calendar_window: "Outreach cadence is bounded by the buyer's fiscal/operating calendar."
+    seasonality.post_event_displacement_window: "Right after an incident or event, dissatisfaction is fresh and actionable."
+    seasonality.activity_window_compression: "Concentrating activity into the live window expands the callable universe."
+
+  Segmentation & ICP:
+    segmentation.size_floor_or_ceiling: "A size threshold above/below which ICP fit collapses."
+    segmentation.subsegment_wedge: "A specific sub-segment where product-market fit is sharpest."
+    segmentation.geo_or_region_filter: "Region is a primary segmentation axis (rules, incumbents, incentives vary)."
+    segmentation.exclusion_filter: "A segment that takes meetings but cannot buy — a disqualifier."
+    segmentation.persona_engagement_skew: "Operations/coordinator titles outperform the C-suite in some categories."

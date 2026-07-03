@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "knowledge-graph-governance"
+version = "0.1.0"
+description = "A governed write-path for knowledge graphs: validate every write against a controlled vocabulary, refuse implicit node creation, version beliefs, and keep a tamper-evident audit."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "Kai Karlstrom" }]
+keywords = ["knowledge-graph", "governance", "ontology", "controlled-vocabulary",
+            "provenance", "audit", "llm", "agent", "graph", "gtm"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+dependencies = ["PyYAML>=6.0"]
+
+[project.optional-dependencies]
+neo4j = ["neo4j>=5.0"]
+dev = ["pytest>=7.0"]
+
+[project.urls]
+Homepage = "https://github.com/kkrlstrm/knowledge-graph-governance"
+Source = "https://github.com/kkrlstrm/knowledge-graph-governance"
+Issues = "https://github.com/kkrlstrm/knowledge-graph-governance/issues"
+
+[project.scripts]
+kgg = "kgg.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["kgg*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

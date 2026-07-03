@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.venv/
+venv/
+
+# kgg working artifacts (local; regenerable)
+*.kgg.db
+*.kgg.db-journal
+proposals/
+audit.jsonl
+demo.db*
+
+# env / secrets
+.env
+
+# OS
+.DS_Store

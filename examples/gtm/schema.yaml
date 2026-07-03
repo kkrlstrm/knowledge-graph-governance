@@ -1,0 +1,30 @@
+# GTM knowledge-graph schema.
+# Three node kinds: `insight` (a governed observation tagged with a controlled
+# GTM category), plus `entity` (accounts/companies) and `persona` (buyer roles)
+# that insights reference. entity/persona are closed kinds — they must be
+# declared explicitly, never created implicitly by a stray reference.
+name: gtm
+scope_label: account          # the ingest's `scope` = the seller these observations inform
+
+vocabularies:
+  gtm_taxonomy: vocabulary.yaml
+
+node_kinds:
+  insight:
+    key: tag
+    required: [statement]
+    vocab_fields:
+      category: gtm_taxonomy    # must be a controlled term (null -> held as unmapped)
+    content_fields: [statement, evidence_strength]   # compared for supersession
+    supersedable: true
+    refs:
+      entities: entity          # each value must resolve to a declared entity
+      personas: persona
+
+  entity:
+    key: name
+    implicit_create: false      # declare under `declare.entity`, never implicit
+
+  persona:
+    key: name
+    implicit_create: false
