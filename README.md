@@ -53,6 +53,9 @@ kgg ingest examples/gtm/sample.yaml \
 kgg ingest examples/gtm/sample.yaml \
     --schema examples/gtm/schema.yaml --backend sqlite:./demo.db --apply
 
+# validate the governance contract itself, anytime
+kgg validate-schema --schema examples/gtm/schema.yaml
+
 # the audit log is tamper-evident
 kgg verify-audit --audit ./audit.jsonl
 
@@ -113,6 +116,8 @@ node_kinds:
   persona: { key: name, implicit_create: false }
 ```
 
+**Identity** is always composite — a node is `(kind, key)`, never a bare key, so two kinds that share a key can't collide. A schema sets `identity: global` (default — `(kind, key)` is unique; the ingest's `scope` is only run metadata) or `identity: scoped` (`(scope, kind, key)` — the same key can exist per tenant/seller/team, partitioned by scope). Run `kgg validate-schema` to check the contract itself before ingesting.
+
 An **ingest file** is what a writer produces:
 
 ```yaml
@@ -146,9 +151,17 @@ Add a store by implementing five methods (`read_existing` / `create` / `supersed
 
 `examples/gtm/` is the strongest demo domain: turning messy go-to-market observations — buying signals, personas, objections, outreach tactics — into durable graph memory *without* letting an agent invent taxonomy, overwrite prior beliefs, or create phantom accounts. It ships a real, reusable GTM taxonomy (7 categories, org-agnostic terms) you can fork, but the engine itself is domain-neutral — write your own `schema.yaml` + `vocabulary.yaml` for any domain where agents write to durable memory.
 
+## Guarantees & limits
+
+- **Atomic apply.** A run's writes happen inside one backend transaction. A crash or error mid-apply rolls back — no partial graph — and the audit entry is written *only after* the transaction commits, so the log never claims a write that didn't land.
+- **Fail-closed creation.** `create` is a plain `INSERT` / `CREATE` against a uniqueness constraint on the node identity. If the planner is wrong or another writer raced in, the storage layer refuses to overwrite and the transaction aborts — it never silently clobbers.
+- **Approvals are bound to policy.** An approval is matched to the exact file **content hash** *and* the **schema fingerprint**. Edit the ingest file or change the governance contract and stale approvals stop applying.
+- **Tamper-evident, not tamper-proof.** The audit chain detects any edit, reorder, insertion, or deletion within the log. It does not stop someone who can rewrite the whole file from regenerating a fresh valid chain — for that, anchor the head hash externally (a Git commit, an object-store version, a signed timestamp, a transparency log). `kgg verify-audit` prints the head so you can pin it.
+- **Not yet:** cross-process concurrency control (two planners against one stale snapshot can conflict — coming via optimistic revisions), and Neo4j is exercised by a manual live smoke, not CI (SQLite is the CI-tested path).
+
 ## Status
 
-v0.1 — the write-gate kernel, a generic schema model, SQLite + Neo4j backends, the GTM example pack, and a full test suite (`python -m pytest`). Roadmap: a config-DSL for lower-friction schemas, a read/query companion, a Postgres backend, and batch proposed-change *branching*.
+v0.1 — the write-gate kernel, a generic schema model with global/scoped identity, transactional + fail-closed SQLite & Neo4j backends, `validate-schema`, the GTM example pack, and a full test suite (`python -m pytest`). Roadmap: optimistic-concurrency revisions, external audit anchoring, a config-DSL for lower-friction schemas, a read/query companion, a Postgres backend, and batch proposed-change *branching*.
 
 ## License
 

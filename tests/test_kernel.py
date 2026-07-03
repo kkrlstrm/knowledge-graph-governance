@@ -42,14 +42,15 @@ def test_proposal_hash_invalidation():
 
         class _P:  # minimal plan-like object for build()
             def __init__(s):
-                s.key, s.kind, s.verdict, s.action, s.detail = "k", "insight", Verdict.REQUIRE_APPROVAL, "held", ""
+                s.kind, s.key, s.id = "insight", "k", "insight:k"
+                s.verdict, s.action, s.detail = Verdict.REQUIRE_APPROVAL, "held", ""
                 s.approved, s.findings = False, []
         rid = proposals.new_run_id(yfile)
-        prop = proposals.build(rid, str(yfile), "kai", "scope", [_P()], [])
+        prop = proposals.build(rid, str(yfile), "kai", "scope", [_P()], [], schema_hash="abc")
         proposals.save(pdir, prop)
-        prop, granted = proposals.record_approval(prop, ["k"], approver="kai")
+        prop, granted = proposals.record_approval(prop, ["insight:k"], approver="kai")
         proposals.save(pdir, prop)
-        assert "k" in proposals.approved_keys(prop)
+        assert "insight:k" in proposals.approved_ids(prop)
         assert proposals.find_for_hash(pdir, proposals.content_hash(yfile)) is not None
         yfile.write_text(yfile.read_text() + "\n# edit\n")
         assert proposals.find_for_hash(pdir, proposals.content_hash(yfile)) is None

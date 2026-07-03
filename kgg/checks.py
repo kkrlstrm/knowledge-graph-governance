@@ -1,25 +1,26 @@
 """Named-check registry + action resolution — generic over a Schema.
 
 Each check is a named function `(ctx) -> list[Finding]` emitting graded
-verdicts. Named checks let you (a) distinguish blocking from advisory via the
-verdict, (b) reject one item while siblings proceed, and (c) add a domain rule
-by appending a function. The harder guarantees:
+verdicts. Every finding, plan, approval, and audit action is keyed by the
+*composite* identity `iid(kind, key)` — never a bare key — so two kinds that
+share a key can't bleed verdicts or approvals into each other.
 
-  collision          re-appearing key: identical -> no-op; changed ->
-                     supersession (if the kind is supersedable) or a held
-                     conflict; never a silent drop/overwrite
-  refs_exist         a reference must resolve to an existing or declared node —
-                     this is the no-implicit-create guarantee
-  protected_guard    one owner cannot overwrite another owner's protected node
-  unmapped_review    an item with no controlled-vocabulary home is held for
-                     review, not force-fit
+The harder guarantees:
+  collision          re-appearing (kind,key): identical -> no-op; changed ->
+                     supersession (if supersedable) or a held conflict; never
+                     a silent drop/overwrite
+  refs_exist         a reference must resolve to an existing/declared node —
+                     the no-implicit-create guarantee
+  protected_guard    one owner can't overwrite another owner's protected node
+  unmapped_review    an item with no controlled-vocabulary home is held, not
+                     force-fit
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from .model import Schema, NodeKind, ExistingNode
+from .model import Schema, NodeKind, ExistingNode, iid
 from .verdicts import Finding, Verdict, RUN, item_verdict
 
 
@@ -38,14 +39,16 @@ class PlanContext:
     nodes: dict                 # kind -> [item, ...]      (observations)
     declared: dict              # kind -> [item, ...]      (explicit prerequisite nodes)
     unmapped: list              # [item, ...] each carrying 'kind'
-    existing: dict              # (kind, key) -> ExistingNode
+    existing: dict              # (kind, key) -> ExistingNode   (already scope-filtered)
 
     def key_of(self, kind: str, item: dict) -> str:
         nk = self.schema.kind(kind)
-        # accept either the schema key-field name or a uniform 'key'
         if nk and nk.key in item:
             return item[nk.key]
         return item.get("key")
+
+    def iid_of(self, kind: str, item: dict) -> str:
+        return iid(kind, self.key_of(kind, item))
 
     def pending_keys(self, kind: str) -> set:
         ex = {k for (kd, k) in self.existing if kd == kind}
@@ -65,7 +68,6 @@ class PlanContext:
 
 
 def _default_kind(schema: Schema) -> str:
-    # the first kind that has vocab_fields (the "observation" kind), else first
     for name, nk in schema.kinds.items():
         if nk.vocab_fields:
             return name
@@ -74,12 +76,9 @@ def _default_kind(schema: Schema) -> str:
 
 def _content_changed(item: dict, nk: NodeKind, ex: ExistingNode) -> bool:
     for f in nk.content_fields:
-        new = item.get(f)
-        old = ex.content.get(f)
+        new, old = item.get(f), ex.content.get(f)
         if isinstance(new, str) or isinstance(old, str):
-            new = (new or "")
-            old = (old or "")
-            if str(new).strip() != str(old).strip():
+            if str(new or "").strip() != str(old or "").strip():
                 return True
         elif new != old:
             return True
@@ -87,7 +86,7 @@ def _content_changed(item: dict, nk: NodeKind, ex: ExistingNode) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Checks
+# Checks  (targets are always iid(kind, key))
 # ---------------------------------------------------------------------------
 
 def check_date_format(ctx: PlanContext) -> list[Finding]:
@@ -105,7 +104,7 @@ def check_unknown_kind(ctx: PlanContext) -> list[Finding]:
     out = []
     for section, kind, item in ctx.sections():
         if ctx.schema.kind(kind) is None:
-            out.append(Finding("unknown_kind", ctx.key_of(kind, item) or "?", Verdict.BLOCK,
+            out.append(Finding("unknown_kind", ctx.iid_of(kind, item), Verdict.BLOCK,
                                f"node kind '{kind}' is not defined in the schema"))
     return out
 
@@ -114,7 +113,7 @@ def check_key_present(ctx: PlanContext) -> list[Finding]:
     out = []
     for section, kind, item in ctx.sections():
         if not ctx.key_of(kind, item):
-            out.append(Finding("key_present", "?", Verdict.BLOCK,
+            out.append(Finding("key_present", iid(kind, "?"), Verdict.BLOCK,
                                f"{section} {kind} item is missing its key"))
     return out
 
@@ -127,8 +126,8 @@ def check_required_fields(ctx: PlanContext) -> list[Finding]:
             continue
         for f in nk.required:
             if not item.get(f):
-                out.append(Finding("required_fields", ctx.key_of(kind, item) or "?",
-                                   Verdict.BLOCK, f"{kind} '{ctx.key_of(kind, item)}' missing required field '{f}'"))
+                out.append(Finding("required_fields", ctx.iid_of(kind, item), Verdict.BLOCK,
+                                   f"{kind} '{ctx.key_of(kind, item)}' missing required field '{f}'"))
     return out
 
 
@@ -144,8 +143,7 @@ def check_vocab_membership(ctx: PlanContext) -> list[Finding]:
                 continue  # null handled by unmapped_review
             vocab = ctx.schema.vocabularies.get(vname)
             if vocab is not None and val not in vocab:
-                out.append(Finding("vocab_membership", ctx.key_of(kind, item) or "?",
-                                   Verdict.BLOCK,
+                out.append(Finding("vocab_membership", ctx.iid_of(kind, item), Verdict.BLOCK,
                                    f"{fieldname}='{val}' is not in vocabulary '{vname}'; "
                                    f"fix it, or set null and list under unmapped_for_review"))
     return out
@@ -157,7 +155,7 @@ def check_key_unique_in_file(ctx: PlanContext) -> list[Finding]:
     for section, kind, item in ctx.sections():
         k = (kind, ctx.key_of(kind, item))
         if k[1] and k in seen:
-            out.append(Finding("key_unique_in_file", k[1], Verdict.BLOCK,
+            out.append(Finding("key_unique_in_file", iid(*k), Verdict.BLOCK,
                                f"duplicate {kind} key within file: {k[1]}"))
         seen.add(k)
     return out
@@ -180,8 +178,7 @@ def check_refs_exist(ctx: PlanContext) -> list[Finding]:
             for v in vals:
                 refkey = v.get("key") if isinstance(v, dict) else v
                 if refkey not in pending:
-                    out.append(Finding("refs_exist", ctx.key_of(kind, item) or "?",
-                                       Verdict.BLOCK,
+                    out.append(Finding("refs_exist", ctx.iid_of(kind, item), Verdict.BLOCK,
                                        f"references {target_kind} '{refkey}' which doesn't exist; "
                                        f"declare it under `declare.{target_kind}` or fix"))
     return out
@@ -196,14 +193,14 @@ def check_implicit_create_guard(ctx: PlanContext) -> list[Finding]:
             continue
         key = ctx.key_of(kind, item)
         if (kind, key) not in ctx.existing:
-            out.append(Finding("implicit_create_guard", key or "?", Verdict.BLOCK,
+            out.append(Finding("implicit_create_guard", iid(kind, key), Verdict.BLOCK,
                                f"kind '{kind}' is closed (implicit_create: false); a new "
                                f"'{key}' must be declared under `declare.{kind}`"))
     return out
 
 
 def check_collision(ctx: PlanContext) -> list[Finding]:
-    """Re-appearing key: identical no-op / supersede / held conflict — never a drop."""
+    """Re-appearing (kind,key): identical no-op / supersede / held conflict — never a drop."""
     out = []
     for section, kind, item in ctx.sections():
         nk = ctx.schema.kind(kind)
@@ -213,19 +210,20 @@ def check_collision(ctx: PlanContext) -> list[Finding]:
         ex = ctx.existing.get((kind, key))
         if not ex:
             continue
+        _id = iid(kind, key)
         if not _content_changed(item, nk, ex):
-            out.append(Finding("collision", key, Verdict.ALLOW,
+            out.append(Finding("collision", _id, Verdict.ALLOW,
                                f"'{key}' already present and unchanged — no-op",
                                severity="info", data={"action": "identical"}))
         elif not nk.supersedable:
-            out.append(Finding("collision", key, Verdict.BLOCK,
+            out.append(Finding("collision", _id, Verdict.BLOCK,
                                f"'{key}' exists and kind '{kind}' is not supersedable"))
         elif item.get("supersede") is True:
-            out.append(Finding("collision", key, Verdict.ALLOW,
+            out.append(Finding("collision", _id, Verdict.ALLOW,
                                f"'{key}' changed; supersede:true — will version the prior belief",
                                severity="warn", data={"action": "supersede"}))
         else:
-            out.append(Finding("collision", key, Verdict.REQUIRE_APPROVAL,
+            out.append(Finding("collision", _id, Verdict.REQUIRE_APPROVAL,
                                f"'{key}' exists with different content; set supersede:true or "
                                f"approve to version the prior belief",
                                severity="warn", data={"action": "conflict"}))
@@ -243,30 +241,37 @@ def check_protected_guard(ctx: PlanContext) -> list[Finding]:
         if not ex or not ex.is_protected:
             continue
         if _content_changed(item, nk, ex) and ex.owner and ex.owner != ctx.owner:
-            out.append(Finding("protected_guard", key, Verdict.BLOCK,
+            out.append(Finding("protected_guard", iid(kind, key), Verdict.BLOCK,
                                f"'{key}' is protected and owned by '{ex.owner}'; "
                                f"'{ctx.owner}' may not overwrite it"))
     return out
 
 
 def check_unmapped_review(ctx: PlanContext) -> list[Finding]:
-    """Uncertainty is first-class — held for review, never force-fit."""
+    """Uncertainty is first-class — held for review, never force-fit.
+
+    Only fires for NEW unmapped observations. If the (kind,key) already exists,
+    the collision check governs the re-ingest (identical -> no-op, changed ->
+    conflict/supersede), so an already-approved unmapped node isn't re-created.
+    """
     out = []
     for it in ctx.unmapped:
         kind = it.get("kind", _default_kind(ctx.schema))
-        out.append(Finding("unmapped_review", ctx.key_of(kind, it) or "?",
-                           Verdict.REQUIRE_APPROVAL,
+        if (kind, ctx.key_of(kind, it)) in ctx.existing:
+            continue
+        out.append(Finding("unmapped_review", ctx.iid_of(kind, it), Verdict.REQUIRE_APPROVAL,
                            f"'{ctx.key_of(kind, it)}' has no controlled-vocabulary home — "
                            f"held for human review", severity="warn",
                            data={"action": "unmapped"}))
-    # A node whose vocab field is explicitly null is uncertainty too.
     for kind, items in ctx.nodes.items():
         nk = ctx.schema.kind(kind)
         if not nk or not nk.vocab_fields:
             continue
         for item in items:
+            if (kind, ctx.key_of(kind, item)) in ctx.existing:
+                continue
             if any(item.get(f) is None for f in nk.vocab_fields):
-                out.append(Finding("unmapped_review", ctx.key_of(kind, item) or "?",
+                out.append(Finding("unmapped_review", ctx.iid_of(kind, item),
                                    Verdict.REQUIRE_APPROVAL,
                                    f"'{ctx.key_of(kind, item)}' has a null controlled field — "
                                    f"will load as unmapped; approve to confirm",
@@ -313,6 +318,7 @@ class ItemPlan:
     section: str          # node | declare | unmapped
     kind: str
     key: str
+    id: str               # iid(kind, key) — the composite identity
     verdict: Verdict
     action: str
     approved: bool
@@ -321,23 +327,25 @@ class ItemPlan:
     findings: list = field(default_factory=list)
 
 
-def _hint(findings: list[Finding], key: str) -> str | None:
+def _hint(findings: list[Finding], _id: str) -> str | None:
     for f in findings:
-        if f.target == key and f.data.get("action"):
+        if f.target == _id and f.data.get("action"):
             return f.data["action"]
     return None
 
 
 def resolve_actions(ctx: PlanContext, findings: list[Finding],
                     approvals: set | None = None, approve_all: bool = False) -> list[ItemPlan]:
+    """Turn findings into one ItemPlan per writable item. `approvals` is a set of iids."""
     approvals = approvals or set()
     plans = []
     for section, kind, item in ctx.sections():
         key = ctx.key_of(kind, item) or "?"
-        verdict = item_verdict(findings, key)
-        hint = _hint(findings, key)
-        approved = approve_all or key in approvals
-        item_findings = [f for f in findings if f.target == key]
+        _id = iid(kind, key)
+        verdict = item_verdict(findings, _id)
+        hint = _hint(findings, _id)
+        approved = approve_all or _id in approvals
+        item_findings = [f for f in findings if f.target == _id]
 
         if verdict >= Verdict.BLOCK:
             action, detail = BLOCKED, ("run HALT" if verdict == Verdict.HALT else "failed a blocking check")
@@ -363,7 +371,7 @@ def resolve_actions(ctx: PlanContext, findings: list[Finding],
             else:
                 action, detail = CREATE, "new"
 
-        plans.append(ItemPlan(section=section, kind=kind, key=key, verdict=verdict,
+        plans.append(ItemPlan(section=section, kind=kind, key=key, id=_id, verdict=verdict,
                               action=action, approved=approved, item=item,
                               detail=detail, findings=item_findings))
     return plans

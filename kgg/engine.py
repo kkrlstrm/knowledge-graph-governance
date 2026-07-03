@@ -2,14 +2,15 @@
 
     load ingest YAML
       -> structural HALT gate (source + date + a body)
-    read existing nodes from the backend
-      -> build a PlanContext
-      -> run the named-check registry -> graded findings
+    load + validate the schema (the governance contract itself)
+    read existing nodes from the backend (scope-filtered in a SCOPED schema)
+      -> build a PlanContext -> run named checks -> graded findings
     resolve per-item actions (create / unchanged / supersede / hold / block)
-      -> write a staged proposal artifact
-    on apply, for each ALLOW or approved item:
-      -> stamp provenance, create/supersede via the backend, link refs
-      -> append one hash-chained audit entry
+      -> write a staged proposal (bound to content_hash AND schema_hash)
+    on apply, inside one transaction:
+      -> stamp provenance, create (fail-closed) / supersede / link
+    on commit:
+      -> append one hash-chained audit entry  (never before the writes land)
 """
 from __future__ import annotations
 
@@ -18,13 +19,13 @@ from pathlib import Path
 import yaml
 
 from . import audit, proposals, provenance
-from .model import Schema
+from .model import Schema, validate_schema
 from .verdicts import Finding, Verdict, RUN, run_halts
 from .checks import (
     PlanContext, run_checks, resolve_actions,
     CREATE, UNCHANGED, SUPERSEDE, CREATE_UNMAPPED, HELD, BLOCKED,
 )
-from .backends.base import Backend, open_backend
+from .backends.base import Backend, open_backend, GLOBAL_PARTITION
 
 _SECTION_ORDER = {"declare": 0, "node": 1, "unmapped": 2}
 _CONTROL_KEYS = {"supersede", "protected"}
@@ -48,10 +49,13 @@ def structural_halt(data) -> list[Finding]:
     return out
 
 
+def _scope_of(data: dict, schema: Schema) -> str:
+    return data.get("scope") or data.get(schema.scope_label) or ""
+
+
 def build_context(data: dict, schema: Schema, existing: dict, owner: str, run_id: str) -> PlanContext:
-    scope = data.get("scope") or data.get(schema.scope_label) or ""
     return PlanContext(
-        schema=schema, scope=scope, source=data.get("source", ""),
+        schema=schema, scope=_scope_of(data, schema), source=data.get("source", ""),
         date=str(data.get("date", "")), owner=owner, run_id=run_id,
         nodes=data.get("nodes") or {},
         declared=data.get("declare") or {},
@@ -64,7 +68,7 @@ def _props(item: dict) -> dict:
     return {k: v for k, v in item.items() if k not in _CONTROL_KEYS}
 
 
-def _link_refs(backend: Backend, ctx: PlanContext, plan) -> None:
+def _link_refs(backend: Backend, ctx: PlanContext, plan, identity_scope: str) -> None:
     nk = ctx.schema.kind(plan.kind)
     if not nk:
         return
@@ -76,10 +80,11 @@ def _link_refs(backend: Backend, ctx: PlanContext, plan) -> None:
             vals = [vals]
         for v in vals:
             refkey = v.get("key") if isinstance(v, dict) else v
-            backend.link(plan.kind, plan.key, fieldname, target_kind, refkey)
+            backend.link(plan.kind, plan.key, fieldname, target_kind, refkey, identity_scope)
 
 
-def apply_plans(backend: Backend, ctx: PlanContext, plans: list) -> dict:
+def apply_plans(backend: Backend, ctx: PlanContext, plans: list, identity_scope: str) -> dict:
+    """Perform the writes. Caller wraps this in backend.transaction()."""
     summary = {"created": 0, "superseded": 0, "unmapped": 0, "unchanged": 0,
                "held": 0, "blocked": 0}
     actions = []
@@ -94,45 +99,50 @@ def apply_plans(backend: Backend, ctx: PlanContext, plans: list) -> dict:
             summary["unchanged"] += 1
             continue
         if plan.action == SUPERSEDE:
-            rev = backend.supersede(nk, plan.key, _props(plan.item), prov, ctx.run_id)
-            _link_refs(backend, ctx, plan)
+            rev = backend.supersede(nk, plan.key, _props(plan.item), prov, ctx.run_id, identity_scope)
+            _link_refs(backend, ctx, plan, identity_scope)
             summary["superseded"] += 1
-            actions.append({"action": "supersede", "kind": plan.kind, "key": plan.key, "revision": rev})
+            actions.append({"action": "supersede", "id": plan.id, "revision": rev})
             continue
         status = "unmapped" if plan.action == CREATE_UNMAPPED else "active"
-        backend.create(nk, plan.key, _props(plan.item), prov, status)
-        _link_refs(backend, ctx, plan)
-        if plan.action == CREATE_UNMAPPED:
-            summary["unmapped"] += 1
-        else:
-            summary["created"] += 1
-        actions.append({"action": plan.action, "kind": plan.kind, "key": plan.key})
+        backend.create(nk, plan.key, _props(plan.item), prov, status, identity_scope)
+        _link_refs(backend, ctx, plan, identity_scope)
+        summary["unmapped" if plan.action == CREATE_UNMAPPED else "created"] += 1
+        actions.append({"action": plan.action, "id": plan.id})
     summary["actions"] = actions
     return summary
 
 
 def ingest(file: str, schema_path: str, dsn: str, *, apply: bool, owner: str,
            approve_all: bool, proposal_dir: str, audit_log: str) -> dict:
-    """Run the full pipeline. Returns a result dict for the CLI to render."""
     data = load_ingest(file)
-    halts = structural_halt(data)
     run_id = proposals.new_run_id(file)
+
+    halts = structural_halt(data)
     if run_halts(halts):
         return {"halted": True, "findings": halts, "run_id": run_id}
 
     schema = Schema.load(schema_path)
+    schema_errs = validate_schema(schema)
+    if schema_errs:
+        return {"schema_invalid": True, "errors": schema_errs, "run_id": run_id}
+    schema_hash = schema.fingerprint()
+
     backend = open_backend(dsn)
     try:
-        existing = backend.read_existing(schema)
+        scope = _scope_of(data, schema)
+        identity_scope = scope if schema.scoped else GLOBAL_PARTITION
+        existing = backend.read_existing(schema, scope)
         ctx = build_context(data, schema, existing, owner, run_id)
         findings = halts + run_checks(ctx)
 
         chash = proposals.content_hash(file)
-        prior = proposals.find_for_hash(proposal_dir, chash)
-        approvals = proposals.approved_keys(prior)
+        prior = proposals.find_for_hash(proposal_dir, chash, schema_hash)
+        approvals = proposals.approved_ids(prior)
         plans = resolve_actions(ctx, findings, approvals=approvals, approve_all=approve_all)
 
-        proposal = proposals.build(run_id, file, owner, ctx.scope, plans, findings)
+        proposal = proposals.build(run_id, file, owner, ctx.scope, plans, findings,
+                                   schema_hash=schema_hash, identity=schema.identity)
         if prior:
             proposal["approvals"] = prior.get("approvals", [])
         proposals.save(proposal_dir, proposal)
@@ -142,10 +152,14 @@ def ingest(file: str, schema_path: str, dsn: str, *, apply: bool, owner: str,
         if result["halted"] or not apply:
             return result
 
-        summary = apply_plans(backend, ctx, plans)
+        with backend.transaction():
+            summary = apply_plans(backend, ctx, plans, identity_scope)
+        # Audit is written only after the transaction commits — a rolled-back
+        # apply leaves neither graph writes nor an audit entry.
         entry = audit.append(audit_log, {
             "event": "apply", "run_id": run_id, "file": file, "owner": owner,
-            "scope": ctx.scope, "content_hash": chash,
+            "scope": ctx.scope, "identity": schema.identity, "content_hash": chash,
+            "schema_hash": schema_hash,
             "summary": {k: v for k, v in summary.items() if k != "actions"},
             "actions": summary.get("actions", []),
         })

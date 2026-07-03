@@ -30,11 +30,14 @@ def new_run_id(file_path: str | Path) -> str:
 
 
 def build(run_id: str, file_path: str, owner: str, scope: str,
-          plans: list, findings: list[Finding]) -> dict:
+          plans: list, findings: list[Finding], schema_hash: str = "",
+          identity: str = "global") -> dict:
     return {
         "run_id": run_id,
         "file": str(file_path),
         "content_hash": content_hash(file_path),
+        "schema_hash": schema_hash,
+        "identity": identity,
         "created_ts": datetime.now(timezone.utc).isoformat(),
         "owner": owner,
         "scope": scope,
@@ -42,8 +45,9 @@ def build(run_id: str, file_path: str, owner: str, scope: str,
         "run_findings": [f.to_dict() for f in findings if f.target == RUN],
         "items": [
             {
-                "key": p.key,
+                "id": p.id,               # composite identity (kind:key)
                 "kind": p.kind,
+                "key": p.key,
                 "verdict": p.verdict.label,
                 "action": p.action,
                 "detail": p.detail,
@@ -76,7 +80,10 @@ def load(proposal_dir: str | Path, run_id: str) -> dict | None:
     return json.loads(p.read_text())
 
 
-def find_for_hash(proposal_dir: str | Path, chash: str) -> dict | None:
+def find_for_hash(proposal_dir: str | Path, chash: str, schema_hash: str | None = None) -> dict | None:
+    """Latest proposal matching the file content hash — and, if given, the schema
+    hash. Binding on both means neither an edited ingest file nor a changed
+    governance policy can silently reuse a stale approval."""
     d = Path(proposal_dir)
     if not d.exists():
         return None
@@ -86,34 +93,56 @@ def find_for_hash(proposal_dir: str | Path, chash: str) -> dict | None:
             prop = json.loads(f.read_text())
         except (json.JSONDecodeError, OSError):
             continue
-        if prop.get("content_hash") == chash:
-            if best is None or prop.get("created_ts", "") >= best.get("created_ts", ""):
-                best = prop
+        if prop.get("content_hash") != chash:
+            continue
+        if schema_hash is not None and prop.get("schema_hash", "") != schema_hash:
+            continue
+        if best is None or prop.get("created_ts", "") >= best.get("created_ts", ""):
+            best = prop
     return best
 
 
-def approved_keys(proposal: dict | None) -> set:
+def approved_ids(proposal: dict | None) -> set:
+    """The set of composite ids (kind:key) a human has cleared."""
     if not proposal:
         return set()
-    keys = set()
+    ids = set()
     for a in proposal.get("approvals", []):
-        keys.update(a.get("items", []))
-    return keys
+        ids.update(a.get("items", []))
+    return ids
+
+
+def resolve_ids(proposal: dict, tokens: list[str]) -> list[str]:
+    """Map CLI --items tokens ('kind:key' or a bare key) to held composite ids."""
+    held = {it["id"] for it in proposal["items"] if it["verdict"] == "REQUIRE_APPROVAL"}
+    by_key = {}
+    for it in proposal["items"]:
+        if it["verdict"] == "REQUIRE_APPROVAL":
+            by_key.setdefault(it["key"], []).append(it["id"])
+    out = []
+    for t in tokens:
+        if t in held:
+            out.append(t)
+        elif t in by_key and len(by_key[t]) == 1:   # unambiguous bare key
+            out.append(by_key[t][0])
+    return out
 
 
 def record_approval(proposal: dict, items: list[str], approver: str,
                     note: str = "", approve_all: bool = False):
-    held = [it["key"] for it in proposal["items"] if it["verdict"] == "REQUIRE_APPROVAL"]
-    granted = held if approve_all else [k for k in items if k in held]
+    held = [it["id"] for it in proposal["items"] if it["verdict"] == "REQUIRE_APPROVAL"]
+    granted = held if approve_all else resolve_ids(proposal, items)
     proposal["approvals"].append({
         "items": granted,
         "approver": approver,
         "note": note,
+        "schema_hash": proposal.get("schema_hash", ""),
+        "content_hash": proposal.get("content_hash", ""),
         "ts": datetime.now(timezone.utc).isoformat(),
     })
     granted_set = set(granted)
     for it in proposal["items"]:
-        if it["key"] in granted_set:
+        if it["id"] in granted_set:
             it["approved"] = True
     return proposal, granted
 

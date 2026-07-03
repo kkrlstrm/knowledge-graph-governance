@@ -178,6 +178,11 @@ unmapped_for_review:
         r2 = e.run(e.write(txt), apply=True, approve_all=True)
         assert e.actions(r2)["novel_thing"] == CREATE_UNMAPPED
         assert e.rows("SELECT status FROM nodes WHERE key='novel_thing'")[0]["status"] == "unmapped"
+        # re-applying the same file must be idempotent — an existing unmapped node
+        # is UNCHANGED, not re-created (regression: fail-closed create would raise).
+        r3 = e.run(e.write(txt), apply=True, approve_all=True)
+        assert e.actions(r3)["novel_thing"] == UNCHANGED
+        assert len(e.rows("SELECT * FROM nodes WHERE key='novel_thing'")) == 1
 
 
 def test_halt_missing_source():

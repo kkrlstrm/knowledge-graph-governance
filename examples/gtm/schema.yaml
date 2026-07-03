@@ -4,6 +4,8 @@
 # that insights reference. entity/persona are closed kinds — they must be
 # declared explicitly, never created implicitly by a stray reference.
 name: gtm
+identity: global              # (kind,key) is unique; scope is run metadata.
+                             # use `scoped` to partition by scope (per client/seller/tenant).
 scope_label: account          # the ingest's `scope` = the seller these observations inform
 
 vocabularies:
