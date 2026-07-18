@@ -1,5 +1,8 @@
 # kgg — the write gate for agent-managed knowledge graphs
 
+<!-- portfolio-status -->
+**Status:** Reference implementation — extracted from a private production GTM system; tenant data, provider adapters, and company-specific policy stay private. · **Layer:** Knowledge governance · **[Portfolio map ›](https://github.com/kkrlstrm)**
+
 ## Agents should not get direct write access to your knowledge graph.
 
 Knowledge graphs are becoming the memory layer for AI systems. Most agentic setups skip the dangerous part: **the write path.** Everyone tells you to give your agent a knowledge graph. Nobody ships the gate that keeps it from corrupting one.
@@ -166,3 +169,15 @@ v0.1 — the write-gate kernel, a generic schema model with global/scoped identi
 ## License
 
 Apache-2.0. Contributions welcome.
+
+---
+
+<!-- portfolio-footer -->
+## Where this fits
+
+Part of a portfolio of **governed, AI-native GTM systems** — reference implementations and reusable patterns extracted from a private production stack. In that system this is the deterministic write gate that keeps agent-proposed graph memory honest.
+
+**Full portfolio map → [github.com/kkrlstrm](https://github.com/kkrlstrm)**
+
+Works with:
+- [agent-tenancy](https://github.com/kkrlstrm/agent-tenancy) — isolates which tenant a write belongs to
