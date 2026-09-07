@@ -1,33 +1,109 @@
-# kgg — the write gate for agent-managed knowledge graphs
+# kgg — governance for agent memory
 
 <!-- portfolio-status -->
 **Status:** Reference implementation — extracted from a private production GTM system; tenant data, provider adapters, and company-specific policy stay private. · **Layer:** Knowledge governance · **[Portfolio map ›](https://github.com/kkrlstrm)**
 
-## Agents should not get direct write access to your knowledge graph.
+## Govern what your agents are allowed to remember
 
-Knowledge graphs are becoming the memory layer for AI systems. Most agentic setups skip the dangerous part: **the write path.** Everyone tells you to give your agent a knowledge graph. Nobody ships the gate that keeps it from corrupting one.
+Agents can extract facts freely.
 
-Let an LLM emit raw Cypher, SQL, or graph mutations and it will eventually:
+They should not be able to turn those facts directly into durable memory.
 
-- invent node types and drift your taxonomy
-- create phantom entities from a stray edge
-- overwrite prior beliefs with no history
-- lose provenance — nobody knows where a fact came from
-- make post-hoc audit impossible
+**LLM extraction is probabilistic. Memory is durable. Do not connect those two things with a raw database write.**
 
-**LLM extraction is probabilistic. Graph memory is durable. Those two things should not be wired together directly.**
+`kgg` puts a deterministic governance boundary between an observation and the knowledge graph that may remember it.
 
-`kgg` is the deterministic write gate between them. Writers — LLMs, scripts, or humans — propose changes as YAML. `kgg` validates the proposal against your schema and controlled vocabulary, refuses implicit node creation, versions changed beliefs, holds ambiguous items for approval, stamps provenance, and appends a hash-chained audit record — before anything reaches the graph.
+```mermaid
+flowchart LR
+    Source["Agent observes something"] --> Proposal["Proposed memory"]
 
+    Proposal --> Gate{"Should the graph<br/>remember this?"}
+
+    Gate -->|Valid| Remember["Remember"]
+    Gate -->|Changed belief| Supersede["Version old belief"]
+    Gate -->|Ambiguous| Hold["Hold for review"]
+    Gate -->|Invalid| Reject["Reject"]
+
+    Remember --> Graph["Durable knowledge"]
+    Supersede --> Graph
+    Hold --> Human["Human decision"]
+    Human --> Gate
+
+    Graph --> Explain["Can we explain<br/>why we believe it?"]
 ```
-writer ──▶  proposal.yaml  ──▶  [ kgg gate ]  ──▶  your graph
-  (LLM /                           │
-   script /        controlled vocabulary · no implicit creation
-   human)          supersession · provenance · staged approval
-                   graded verdicts · hash-chained audit
-```
 
-It's what Git and CI do for code — proposed changes, validation, review, versioning, provenance, audit — applied to graph memory.
+> **Observation is cheap. Memory should be earned.**
+
+Writers — agents, scripts, or humans — propose changes. `kgg` decides what those proposals are allowed to become:
+
+- **remember** — the fact satisfies the graph's contract;
+- **supersede** — the belief changed, so the prior version is preserved rather than overwritten;
+- **hold** — the observation may be real, but taxonomy, identity, or meaning is ambiguous;
+- **reject** — the proposal violates a deterministic boundary.
+
+Anything that lands carries provenance and an audit trail. Anything you later read can be checked against the evidence for why it exists.
+
+## Why this exists
+
+A knowledge graph used by agents is not just storage. It becomes part of the system's memory.
+
+Once an agent writes something there, future agents may plan from it, retrieve it as context, rank accounts with it, contact customers because of it, or treat it as established truth.
+
+That makes the write path consequential.
+
+Without a governance layer, ordinary model errors become durable system state:
+
+| What happens | What persists |
+|---|---|
+| model invents a category | taxonomy drift |
+| stray relationship references an unknown entity | phantom node |
+| a newer extraction disagrees with an older one | silent overwrite |
+| two sources disagree today | whichever write happened to win |
+| a fact has no clear category | force-fit or uncontrolled vocabulary growth |
+| nobody records where a claim came from | unverifiable memory |
+
+`kgg` makes those states explicit instead.
+
+### The graph does not have to pretend uncertainty disappeared
+
+A new observation does not always mean **write the newest thing as truth**.
+
+It may mean:
+
+- **the belief changed** → supersede the old revision;
+- **two sources disagree** → retain both and record the contradiction;
+- **the observation has no honest place in the current vocabulary** → hold it as a vocabulary gap rather than inventing a category;
+- **we do not know yet** → require review.
+
+The graph can retain uncertainty without turning uncertainty into corruption.
+
+Three properties matter:
+
+**Memory can change without losing history.**  
+**Memory can disagree without inventing certainty.**  
+**The vocabulary can evolve without letting writers redefine it.**
+
+## Governance continues after the write
+
+Admission is only half the problem.
+
+Later, when an agent reads a fact back out of the graph, it should be possible to ask:
+
+**Why does the system believe this?**
+
+`kgg explain` reconstructs the current belief, its revision history, provenance, competing claims, and audit integrity.
+
+A remembered fact is reported as one of three states:
+
+- **verified** — its provenance resolves through an intact audit chain;
+- **unverified** — the fact exists, but its provenance cannot currently be established;
+- **invalidated** — the evidence chain is broken or the belief is no longer current.
+
+There is deliberately no boolean `trusted = true`.
+
+**A graph can know something, doubt something, or know that the basis for believing it has failed.**
+
+It's what Git and CI do for code — proposed changes, validation, review, versioning, provenance, audit — applied to durable agent memory.
 
 ## What corrupts agent-written graphs
 
