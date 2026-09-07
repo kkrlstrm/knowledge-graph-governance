@@ -1,0 +1,107 @@
+case: near_duplicate_keys
+guarantee: near-duplicate-keys
+title: "A key that is nearly an existing one is held for a human, and never merged"
+# `refs_exist` stops a stray reference from conjuring a node. This is the other
+# door: a writer legitimately declares `Acme Robotics, Inc.` when `Acme Robotics`
+# already exists. Both declarations are valid, nothing errors, and the graph now
+# holds two nodes for one company — invisible until a query joins on one of them.
+#
+# The gate reports it and holds. It does NOT merge, because no threshold can tell
+# `Acme Robotics` / `Acme Robotics, Inc.` (one company) from `Portland, OR` /
+# `Portland, ME` (two governments) — they score the same.
+
+files:
+  seed: |
+    scope: Northwind
+    source: conformance
+    date: 2026-07-03
+    declare:
+      entity:
+        - {name: Acme Robotics}
+        - {name: "Portland, OR"}
+    nodes:
+      insight:
+        - tag: seeded
+          category: signal.new_hire
+          statement: "Seed."
+          entities: [Acme Robotics]
+          evidence_strength: 3
+
+  near_miss: |
+    scope: Northwind
+    source: conformance
+    date: 2026-07-10
+    declare:
+      entity: [{name: "Acme Robotics, Inc."}]
+    nodes:
+      insight:
+        - tag: from_the_near_miss
+          category: signal.org_change
+          statement: "Filed under a near-duplicate account name."
+          entities: ["Acme Robotics, Inc."]
+          evidence_strength: 3
+
+  genuinely_different: |
+    scope: Northwind
+    source: conformance
+    date: 2026-07-11
+    declare:
+      entity: [{name: "Portland, ME"}]
+    nodes:
+      insight:
+        - tag: other_portland
+          category: signal.org_change
+          statement: "A different city entirely."
+          entities: ["Portland, ME"]
+          evidence_strength: 3
+
+  low_entropy: |
+    scope: Northwind
+    source: conformance
+    date: 2026-07-12
+    declare:
+      entity: [{name: ACME}]
+    nodes:
+      insight:
+        - tag: short_key
+          category: signal.org_change
+          statement: "Short, low-signal key."
+          entities: [ACME]
+          evidence_strength: 3
+
+steps:
+  - ingest: {file: seed, apply: true}
+    expect: {items: {entity:Acme Robotics: create}}
+
+  # The near miss is HELD, and the finding names what it resembles.
+  - ingest: {file: near_miss}
+    expect:
+      items: {"entity:Acme Robotics, Inc.": held}
+      checks_fired: [near_duplicate_key]
+      message_contains: "similar to existing entity 'Acme Robotics'"
+
+  # Approving creates it as a SEPARATE node. Nothing is merged, and the original
+  # is untouched at revision 1 — the opposite of an APOC mergeNodes with
+  # `properties: 'discard'`, which would keep one node and drop the other's data.
+  - approve:
+      file: near_miss
+      schema: "examples/gtm/schema.yaml"
+      items: ["entity:Acme Robotics, Inc."]
+  - ingest: {file: near_miss, apply: true}
+    expect: {items: {"entity:Acme Robotics, Inc.": create}}
+  - explain: {id: "entity:Acme Robotics"}
+    expect: {exists: true, revision: 1, versions: 0}
+  - explain: {id: "entity:Acme Robotics, Inc."}
+    expect: {exists: true, revision: 1}
+
+  # `Portland, ME` against `Portland, OR` is a different government. It scores
+  # below the floor on trigram overlap, so it applies without a hold — but the
+  # point is that the gate would have held it rather than merged it either way.
+  - ingest: {file: genuinely_different, apply: true}
+    expect: {items: {"entity:Portland, ME": create}}
+
+  # A short, low-entropy key is excluded from comparison entirely rather than
+  # compared more strictly. Such keys collide by coincidence constantly, and
+  # reporting those pairs would bury the real ones.
+  - ingest: {file: low_entropy, apply: true}
+    expect: {items: {entity:ACME: create}}

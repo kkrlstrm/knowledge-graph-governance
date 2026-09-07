@@ -12,10 +12,33 @@ to follow [Semantic Versioning](https://semver.org/).
 - External audit anchoring (Git commit / object-store version / signed
   timestamp) for tamper-*proof*, not just tamper-evident, guarantees.
 - As-of reads over the `valid_from` / `valid_until` already recorded.
-- Near-duplicate key detection at the reference boundary (`Acme Robotics` vs
-  `Acme Robotics, Inc.`), held for approval, never auto-merged.
 - Neo4j exercised in CI via Testcontainers (SQLite is the CI-tested path today).
 - A config-DSL for lower-friction schemas, and a Postgres backend.
+
+## [Unreleased] — near-duplicate keys
+
+### Added
+- **Near-duplicate key detection** — `near_duplicate_check: true` per kind holds a
+  new key that is nearly an existing one (`Acme Robotics, Inc.` against
+  `Acme Robotics`) as REQUIRE_APPROVAL. It **never merges**: approving creates a
+  separate node and leaves the original at revision 1. Off by default, because
+  whether two similar keys name one thing is a domain question — company names
+  merge, place names do not.
+
+  Trigram Jaccard over a normalised key, gated on Shannon entropy first (short or
+  repetitive keys are excluded from comparison rather than compared more
+  strictly), blocked on a 4-character prefix to stay near-linear. The threshold
+  was calibrated against four named pairs recorded in `kgg/similarity.py`;
+  `test_similarity_calibration_pairs` pins them. Known miss, measured and stated:
+  a long suffix on a short base scores low (`Globex` / `Globex Corporation` is
+  0.27) and is not flagged.
+
+  Two bugs of my own, found by writing the conformance case: a `len // 8` block
+  band put `acme robotics` and `acme robotics inc` in different blocks and so
+  missed the exact pair the check exists for, and the initial 0.86 floor was
+  carried over from tools that threshold a different metric — trigram Jaccard
+  scores systematically lower than normalised edit distance, so the two numbers
+  were never comparable.
 
 ## [0.2.0] — 2026-09-07
 

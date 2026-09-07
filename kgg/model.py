@@ -204,6 +204,12 @@ class NodeKind:
     claim_slot: list = field(default_factory=list)   # fields identifying WHAT
                                     # this node is a claim about; two active
                                     # nodes sharing a slot are competing claims
+    near_duplicate_check: bool = False   # hold a new key that is nearly an
+                                    # existing one. OFF by default: whether two
+                                    # similar keys name one thing is a domain
+                                    # question, and the answer differs by kind
+                                    # (company names merge, place names do not).
+    near_duplicate_threshold: float = 0.75
 
 
 @dataclass
@@ -254,6 +260,9 @@ class Schema:
                 implicit_create=bool(spec.get("implicit_create", True)),
                 claim_field=str(spec.get("claim_field", "") or ""),
                 claim_slot=list(slot if isinstance(slot, list) else [slot]),
+                near_duplicate_check=bool(spec.get("near_duplicate_check", False)),
+                near_duplicate_threshold=float(
+                    spec.get("near_duplicate_threshold", 0.75)),
             )
         return cls(name=data.get("name", p.stem), kinds=kinds, vocabularies=vocabs,
                    scope_label=data.get("scope_label", "scope"),
@@ -312,6 +321,9 @@ def validate_schema(schema: Schema, *, load_checks: bool = True) -> list[str]:
         if nk.claim_slot and not nk.claim_field:
             errs.append(f"kind '{kname}' declares claim_slot but no claim_field — "
                         f"there is nothing for a detector to compare")
+        if not (0.0 < nk.near_duplicate_threshold <= 1.0):
+            errs.append(f"kind '{kname}' near_duplicate_threshold must be in (0, 1], "
+                        f"got {nk.near_duplicate_threshold}")
     for vname, vocab in schema.vocabularies.items():
         if not vocab.terms:
             errs.append(f"vocabulary '{vname}' has no terms")

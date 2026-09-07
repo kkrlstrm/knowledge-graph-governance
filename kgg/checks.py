@@ -24,6 +24,7 @@ from .model import (
     Schema, NodeKind, ExistingNode, iid,
     EXACT, SYNONYM, DEPRECATED_HIT, UNKNOWN,
 )
+from .similarity import find_near_duplicates
 from .verdicts import Finding, Verdict, RUN, item_verdict, worst
 
 
@@ -337,6 +338,45 @@ def check_implicit_create_guard(ctx: PlanContext) -> list[Finding]:
     return out
 
 
+def check_near_duplicate_key(ctx: PlanContext) -> list[Finding]:
+    """A new key that is nearly an existing one — held, never merged.
+
+    `refs_exist` stops a stray reference from conjuring a node. This catches the
+    other door: a writer legitimately declares `Acme Robotics, Inc.` when `Acme
+    Robotics` exists, both declarations are valid, and the graph now holds two
+    nodes for one company with nothing marking it.
+
+    Only fires for genuinely NEW keys on kinds that opt in with
+    `near_duplicate_check: true`. It is off by default because whether two
+    similar keys are the same thing is a domain question — `Portland, OR` and
+    `Portland, ME` score the same as `Acme Robotics` and `Acme Robotics, Inc.` —
+    and a gate should not assume the answer for a kind whose owner has not said.
+    """
+    out = []
+    for kind, nk in ctx.schema.kinds.items():
+        if not nk.near_duplicate_check:
+            continue
+        existing = [k for (kd, k) in ctx.existing if kd == kind]
+        incoming = []
+        for section, k, item in ctx.sections():
+            if k != kind:
+                continue
+            key = ctx.key_of(kind, item)
+            if key and (kind, key) not in ctx.existing:
+                incoming.append(key)
+        if not incoming or not existing:
+            continue
+        for new_key, other, score in find_near_duplicates(
+                incoming, existing, threshold=nk.near_duplicate_threshold):
+            out.append(Finding(
+                "near_duplicate_key", iid(kind, new_key), Verdict.REQUIRE_APPROVAL,
+                f"'{new_key}' is {score:.0%} similar to existing {kind} '{other}'; "
+                f"approve to create it as a separate node, or fix the key to reuse "
+                f"the existing one. Nothing is merged either way.",
+                severity="warn", data={"near_duplicate_of": other, "score": round(score, 4)}))
+    return out
+
+
 def check_collision(ctx: PlanContext) -> list[Finding]:
     """Re-appearing (kind,key): identical no-op / supersede / held conflict — never a drop."""
     out = []
@@ -446,6 +486,7 @@ CORE_CHECKS = [
     ("vocab_membership", check_vocab_membership),
     ("key_unique_in_file", check_key_unique_in_file),
     ("refs_exist", check_refs_exist),
+    ("near_duplicate_key", check_near_duplicate_key),
     ("contradicts_ref", check_contradicts_ref),
     ("implicit_create_guard", check_implicit_create_guard),
     ("collision", check_collision),

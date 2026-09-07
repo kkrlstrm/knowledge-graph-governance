@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from kgg import contradictions, gaps, proposals
-from kgg.checks import resolve_actions, PlanContext, BLOCKED, CREATE
+from kgg.checks import resolve_actions, PlanContext, BLOCKED, CREATE, HELD
 from kgg.engine import ingest
 from kgg.explain import explain, VERIFIED, UNVERIFIED, INVALIDATED
 from kgg.model import Schema, Vocabulary, validate_schema, EXACT, SYNONYM, DEPRECATED_HIT, UNKNOWN
@@ -461,3 +461,87 @@ if __name__ == "__main__":
             f += 1; print(f"  ✗ {fn.__name__}"); traceback.print_exc()
     print(f"\n{p} passed, {f} failed")
     sys.exit(1 if f else 0)
+
+
+# ---------------------------------------------------------------------------
+# Near-duplicate keys
+# ---------------------------------------------------------------------------
+
+def test_similarity_calibration_pairs():
+    """The four pairs the threshold was set against. Change one, re-read them all."""
+    from kgg import similarity as sim
+    def s(a, b):
+        return sim.similarity(sim.normalize(a), sim.normalize(b))
+    assert s("Acme Robotics", "Acme Robotics, Inc.") >= sim.DEFAULT_THRESHOLD
+    assert s("Northwind Analytics", "Northwind Analytic") >= sim.DEFAULT_THRESHOLD
+    assert s("Portland, OR", "Portland, ME") < sim.DEFAULT_THRESHOLD
+    assert s("Q3 Report", "Q4 Report") < sim.DEFAULT_THRESHOLD
+
+
+def test_entropy_gate_excludes_low_signal_keys():
+    from kgg.similarity import is_comparable, normalize
+    for bad in ("ACME", "Q3", "US", "aaaaaa", "ab"):
+        assert not is_comparable(normalize(bad)), f"{bad!r} should be excluded"
+    for good in ("Acme Robotics", "Northwind Analytics", "Portland, OR"):
+        assert is_comparable(normalize(good)), f"{good!r} should be comparable"
+
+
+def test_blocking_does_not_band_on_length():
+    """Regression: a length band put the target pair in different blocks.
+
+    A suffix addition changes length by definition, so banding on length excludes
+    the exact case this check exists for.
+    """
+    from kgg.similarity import block_key, normalize
+    assert block_key(normalize("Acme Robotics")) == block_key(normalize("Acme Robotics, Inc."))
+
+
+def test_find_near_duplicates_skips_exact_and_self():
+    from kgg.similarity import find_near_duplicates
+    hits = list(find_near_duplicates(["Acme Robotics"], ["Acme Robotics"]))
+    assert hits == [], "an identical key is the collision check's job, not this one"
+    hits = list(find_near_duplicates(["Acme Robotics, Inc."], ["Acme Robotics"]))
+    assert len(hits) == 1 and hits[0][1] == "Acme Robotics"
+
+
+def test_near_duplicate_is_held_and_never_merges():
+    with tempfile.TemporaryDirectory() as d:
+        e = Env(d)
+        seed = ("scope: N\nsource: t\ndate: 2026-07-03\ndeclare:\n"
+                "  entity: [{name: Acme Robotics}]\nnodes:\n  insight:\n"
+                "    - tag: a\n      category: signal.new_hire\n      statement: \"s\"\n"
+                "      entities: [Acme Robotics]\n      evidence_strength: 3\n")
+        e.run(e.write(seed), apply=True)
+
+        near = ("scope: N\nsource: t\ndate: 2026-07-10\ndeclare:\n"
+                "  entity: [{name: \"Acme Robotics, Inc.\"}]\nnodes:\n  insight:\n"
+                "    - tag: b\n      category: signal.org_change\n      statement: \"s2\"\n"
+                "      entities: [\"Acme Robotics, Inc.\"]\n      evidence_strength: 3\n")
+        f = e.write(near, "near.yaml")
+        r = e.run(f)
+        assert e.by_id(r)["entity:Acme Robotics, Inc."] == HELD
+        assert any(f_.check == "near_duplicate_key" for f_ in r["findings"])
+
+        # Approving creates a SEPARATE node; the original is untouched.
+        r2 = e.run(f, apply=True, approve_all=True)
+        assert e.by_id(r2)["entity:Acme Robotics, Inc."] == CREATE
+        backend = open_backend(e.db)
+        try:
+            orig = backend.read_node("entity", "Acme Robotics", "*")
+            new = backend.read_node("entity", "Acme Robotics, Inc.", "*")
+        finally:
+            backend.close()
+        assert orig and new and orig["revision"] == 1
+
+
+def test_near_duplicate_check_is_off_unless_the_kind_opts_in():
+    """`persona` does not enable it — distinct roles share most of their words."""
+    with tempfile.TemporaryDirectory() as d:
+        e = Env(d)
+        seed = ("scope: N\nsource: t\ndate: 2026-07-03\ndeclare:\n"
+                "  persona: [{name: VP Sales Operations}]\n")
+        e.run(e.write(seed), apply=True)
+        near = ("scope: N\nsource: t\ndate: 2026-07-10\ndeclare:\n"
+                "  persona: [{name: VP Sales Operation}]\n")
+        r = e.run(e.write(near, "p.yaml"), apply=True)
+        assert e.by_id(r)["persona:VP Sales Operation"] == CREATE

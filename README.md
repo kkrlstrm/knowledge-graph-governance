@@ -35,6 +35,7 @@ It's what Git and CI do for code — proposed changes, validation, review, versi
 |---|---|---|---|
 | Taxonomy drift | `new_hire`, `new_hire_v2`, `signal.newhire` all appear | **Controlled vocabulary** — undefined terms are blocked | `taxonomy-drift` |
 | Phantom nodes | a stray edge creates a fake account/persona | **No implicit creation** — closed kinds must be declared | `phantom-nodes` |
+| Near-duplicate keys | `Acme Robotics` and `Acme Robotics, Inc.` become two accounts | **Held for review** — reported, never merged | `near-duplicate-keys` |
 | Silent overwrite | a newer belief clobbers prior context | **Supersession** — the prior belief is versioned, not dropped | `silent-overwrite` |
 | Sources disagree | one claim quietly wins, or both are averaged | **Contradiction ledger** — both held, neither chosen | `contradiction-ledger` |
 | Unclear evidence | nobody knows where a fact came from | **Provenance** — owner + run id + timestamp on every node | `provenance` |
@@ -49,7 +50,7 @@ conformance` executes all of them against a real backend and fails if any
 documented guarantee stops holding:
 
 ```bash
-kgg conformance            # 19 cases across 15 guarantees
+kgg conformance            # 20 cases across 16 guarantees
 kgg conformance --verbose  # with each case's claim spelled out
 ```
 
@@ -262,6 +263,37 @@ Four design decisions, each from a measured failure rather than an intuition:
 Promoting edits the vocabulary file, which changes the schema fingerprint, which invalidates approvals granted under the old vocabulary. That is the intended cost: changing what the graph is allowed to say is a policy change and gets re-reviewed.
 
 **The vocabulary is a versioned artifact,** not a config file — it carries a `version`, declared `synonyms` folded on read, and a `deprecated` / `replaced_by` path that holds for approval and rewrites the term rather than blocking the writer. Synonyms are only ever *declared*: two terms that sound alike are routinely different concepts, so folding is a curation decision that belongs in the file as a reviewable diff.
+
+## Near-duplicate keys
+
+`refs_exist` stops a stray reference from conjuring a node. This is the other door: a writer legitimately declares `Acme Robotics, Inc.` when `Acme Robotics` already exists. Both declarations are valid, nothing errors, and the graph now holds two accounts for one company — invisible until a query joins on one of them.
+
+```yaml
+node_kinds:
+  entity:
+    key: name
+    near_duplicate_check: true        # off by default
+    near_duplicate_threshold: 0.75
+```
+
+Three decisions, and the last is the one that matters:
+
+- **Exact match first, similarity for the residue.** Normalising and comparing exactly costs nothing and introduces no false merges. Similarity handles what is left.
+- **Entropy before similarity.** The real problem with fuzzy matching is not the threshold, it is that a threshold means different things for different strings — `ABC` vs `ABD` scores high and means nothing. Short or low-entropy keys are excluded from comparison rather than compared more strictly. (The gate is Graphiti's, from `dedup_helpers.py`.)
+- **It never merges.** A hit is `REQUIRE_APPROVAL`; approving creates a separate node and leaves the original untouched. The field's default is the opposite — the official Neo4j resolver merges above 0.8 via APOC with `properties: 'discard'`, keeping the first node's properties and discarding the rest, with no record and no reversal.
+
+No threshold can resolve this correctly, which is why it is held rather than decided. The floor was calibrated against four named pairs, and they are in the source:
+
+| pair | score | |
+|---|---:|---|
+| `Acme Robotics` / `Acme Robotics, Inc.` | 0.77 | flag — one company |
+| `Northwind Analytics` / `Northwind Analytic` | 0.94 | flag — a typo |
+| `Portland, OR` / `Portland, ME` | 0.60 | pass — two governments |
+| `Q3 Report` / `Q4 Report` | 0.50 | pass — two documents |
+
+It is **off by default**, because whether two similar keys name one thing is a domain question whose answer differs by kind: company names merge, place names do not. The GTM pack turns it on for `entity` and leaves it off for `persona`, where distinct roles legitimately share most of their words.
+
+**Known miss, measured:** a long suffix on a short base scores low, because the added span dominates the union — `Globex` vs `Globex Corporation` is 0.27 and is not flagged. This narrows the phantom surface; it does not close it.
 
 ## Backends
 

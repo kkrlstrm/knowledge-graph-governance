@@ -34,6 +34,14 @@ node_kinds:
   entity:
     key: name
     implicit_create: false      # declare under `declare.entity`, never implicit
+    near_duplicate_check: true  # hold `Acme Robotics, Inc.` when `Acme Robotics` exists
+    # On for accounts because a company's name genuinely does vary by suffix,
+    # punctuation and casing across sources, so a near-miss here is far more often
+    # one company than two. It is OFF by default and stays off for `persona`,
+    # where distinct roles legitimately share most of their words ("VP Sales" /
+    # "VP Sales Ops") and the warning would be noise. Whether two similar keys
+    # name one thing is a domain question, and the answer differs by kind.
+    # Nothing is ever merged either way — a hit is held for a human.
 
   persona:
     key: name
