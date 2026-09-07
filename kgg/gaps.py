@@ -85,7 +85,7 @@ def validate_slug(slug: str, *, scope: str = "") -> list[str]:
     client, or tenant it came from cannot be reached by a second writer looking at
     a different account — it is unique by construction, which is exactly the
     property that killed every gap in the version of this that keyed on a
-    per-observation hash. `upciti-tourist-town-thing` is a real example of the
+    per-observation hash. `northwind-tourist-town-thing` is a real example of the
     failure: syntactically perfect, joinable by nobody.
 
     It checks the SCOPE only, deliberately. The item's own key is a writer-chosen

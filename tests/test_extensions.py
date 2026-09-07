@@ -279,7 +279,7 @@ def test_slug_validation():
     assert any("filler" in p for p in gaps.validate_slug("the-other-thing"))
     # names the instance
     assert any("names the scope" in p
-               for p in gaps.validate_slug("upciti-tourist-town", scope="Upciti"))
+               for p in gaps.validate_slug("northwind-tourist-town", scope="Northwind"))
     # a slug legitimately sharing words with its own item key is fine
     assert gaps.validate_slug("ai-governance-clause", scope="Northwind") == []
 

@@ -257,7 +257,7 @@ Four design decisions, each from a measured failure rather than an intuition:
 
 - **The slug is short and canonical; the prose is separate.** An earlier version clustered on the free-text reason and asked writers to make it richer. The reasons got ~65% longer and cross-writer gap merges went from one to *zero* — a longer description inflates the overlap denominator between two accounts of one gap, so convergence gets strictly harder as the artifact a human reads gets better. Prose is not a join key.
 - **`kgg gaps known` exists because convergence on an open set is telepathy.** Asking writers to independently choose the same name does not work: 280 untagged observations produced 223 distinct slugs, and no gap was ever named by two independent sources. The canonical vocabulary doesn't fail this way for a structural reason — the writer is *handed the list*. This hands them the gap list too.
-- **A slug that names its instance is refused.** `upciti-tourist-town-thing` is syntactically perfect and reachable by nobody: unique by construction, which is exactly the property that killed every gap when they were keyed per-observation. The check compares the slug against the ingest's scope.
+- **A slug that names its instance is refused.** `northwind-tourist-town-thing` is syntactically perfect and reachable by nobody: unique by construction, which is exactly the property that killed every gap when they were keyed per-observation. The check compares the slug against the ingest's scope.
 - **Promotion counts independent scopes, not observations.** Nine observations from one scope is one source with a loud voice. Two scopes that never spoke to each other landing on the same slug is evidence.
 
 Promoting edits the vocabulary file, which changes the schema fingerprint, which invalidates approvals granted under the old vocabulary. That is the intended cost: changing what the graph is allowed to say is a policy change and gets re-reviewed.
@@ -321,7 +321,7 @@ Add a store by implementing five write methods (`read_existing` / `create` / `su
 
 ## Status
 
-v0.2 — the write-gate kernel, a generic schema model with global/scoped identity, schema-declared domain check packs, a curated vocabulary with aliases and deprecation, the gap-promotion layer, the contradiction ledger, the `kgg explain` read path, transactional + fail-closed SQLite & Neo4j backends, and a conformance suite where each documented guarantee is a runnable refusal (`kgg conformance`). Roadmap: optimistic-concurrency revisions, external audit anchoring, as-of reads over the recorded valid time, near-duplicate key detection at the reference boundary, a config-DSL for lower-friction schemas, and a Postgres backend.
+v0.2 — the write-gate kernel, a generic schema model with global/scoped identity, schema-declared domain check packs, a curated vocabulary with aliases and deprecation, the gap-promotion layer, the contradiction ledger, the `kgg explain` read path, near-duplicate key detection, transactional + fail-closed SQLite & Neo4j backends, and a conformance suite where each documented guarantee is a runnable refusal (`kgg conformance`). Roadmap: optimistic-concurrency revisions, external audit anchoring, as-of reads over the recorded valid time, a config-DSL for lower-friction schemas, and a Postgres backend.
 
 ## License
 
