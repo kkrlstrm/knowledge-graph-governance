@@ -1,0 +1,59 @@
+case: approval_partial_reports_misses
+guarantee: approvals-bound-to-policy
+title: "A token that approved nothing is reported, never folded into a count"
+# A partial approval that reads as a completed one is the failure here: you type
+# three ids, one is a typo, the tool says "Approved 2 item(s)" and you move on
+# believing all three cleared. The CLI exits non-zero when any token matched
+# nothing, and names each miss with its reason.
+
+files:
+  two_held: |
+    scope: Northwind
+    source: conformance
+    date: 2026-07-03
+    declare:
+      entity: [{name: Acme Robotics}]
+    nodes:
+      insight:
+        - tag: alpha_gap
+          statement: "First unmapped mechanic."
+          unmapped_gap: effective-size-proxy
+          unmapped_reason: "Headcount is the wrong size proxy here."
+          entities: [Acme Robotics]
+          evidence_strength: 3
+        - tag: beta_gap
+          statement: "Second unmapped mechanic."
+          unmapped_gap: procurement-calendar-lock
+          unmapped_reason: "Nearest tag is about thresholds, not calendars."
+          entities: [Acme Robotics]
+          evidence_strength: 3
+        - tag: fine_one
+          category: signal.new_hire
+          statement: "Perfectly taggable."
+          entities: [Acme Robotics]
+          evidence_strength: 4
+
+steps:
+  - ingest: {file: two_held}
+    expect:
+      items:
+        insight:alpha_gap: held
+        insight:beta_gap: held
+        insight:fine_one: create
+
+  # One real id, one typo, and one id that is in the proposal but was never
+  # awaiting approval. Each gets its own reason.
+  - approve:
+      file: two_held
+      schema: "examples/gtm/schema.yaml"
+      items: ["insight:alpha_gap", "insight:alhpa_gap", "insight:fine_one"]
+    expect:
+      granted: ["insight:alpha_gap"]
+      unmatched: ["insight:alhpa_gap", "insight:fine_one"]
+
+  # Only the approved one lands; the other stays held.
+  - ingest: {file: two_held, apply: true}
+    expect:
+      items:
+        insight:alpha_gap: create_unmapped
+        insight:beta_gap: held

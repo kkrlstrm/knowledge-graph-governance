@@ -167,8 +167,12 @@ def test_valid_schema_passes():
 def test_approval_ignored_when_schema_changes():
     with tempfile.TemporaryDirectory() as d:
         e = Env(d)
+        # null category -> unmapped -> held. The gap slug is required: an unmapped
+        # item that names no mechanic cannot be joined by a second writer.
         base = ("source: t\ndate: 2026-07-03\nnodes:\n  insight:\n    - tag: u\n"
-                "      statement: \"no category\"\n")   # null category -> unmapped -> held
+                "      statement: \"no category\"\n"
+                "      unmapped_gap: effective-size-proxy\n"
+                "      unmapped_reason: \"Nearest tag bands by deal size, not fit.\"\n")
         f = e.write("scope: N\n" + base)
         r = e.run(f)                    # held under the GTM schema hash
         assert e.by_id(r)["insight:u"] == HELD

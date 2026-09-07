@@ -1,0 +1,71 @@
+case: contradiction_resolution_retains
+guarantee: contradiction-ledger
+title: "Superseding one side resolves the disagreement and keeps the record of it"
+# "We used to believe two conflicting things and here is how it ended" is the
+# part worth keeping. Deleting the row on resolution would erase the reason the
+# surviving claim is worded the way it is.
+
+files:
+  a: |
+    scope: Northwind
+    source: call with the CFO
+    date: 2026-07-03
+    declare:
+      entity: [{name: Acme Robotics}]
+    nodes:
+      insight:
+        - tag: acme_reachable
+          category: stakeholder.persona_unreachable_by_channel
+          statement: "The finance director is reachable by phone during month end."
+          entities: [Acme Robotics]
+          evidence_strength: 3
+
+  b: |
+    scope: Northwind
+    source: call with the assistant
+    date: 2026-07-05
+    declare:
+      entity: [{name: Acme Robotics}]
+    nodes:
+      insight:
+        - tag: acme_blocked
+          category: stakeholder.persona_unreachable_by_channel
+          statement: "The finance director is not reachable by phone during month end."
+          entities: [Acme Robotics]
+          evidence_strength: 4
+
+  # One side is revised to agree. The disagreement is over, but it happened.
+  b_revised: |
+    scope: Northwind
+    source: follow-up with the assistant
+    date: 2026-08-01
+    declare:
+      entity: [{name: Acme Robotics}]
+    nodes:
+      insight:
+        - tag: acme_blocked
+          category: stakeholder.persona_unreachable_by_channel
+          statement: "The finance director is reachable by phone during month end, after the close."
+          entities: [Acme Robotics]
+          evidence_strength: 4
+          supersede: true
+
+steps:
+  - ingest: {file: a, apply: true}
+  - ingest: {file: b, apply: true}
+  - contradictions: {state: active}
+    expect: {count: 1, detectors: [negation_mismatch]}
+
+  - ingest: {file: b_revised, apply: true}
+    expect: {items: {insight:acme_blocked: supersede}}
+
+  # No active disagreement remains...
+  - contradictions: {state: active}
+    expect: {count: 0}
+  # ...but the observation is retained, resolved, with both original snapshots.
+  - contradictions: {state: all}
+    expect: {count: 1, states: [resolved], snapshots_retained: true}
+
+  # And the surviving claim reads clean while still linking to the resolved history.
+  - explain: {id: "insight:acme_blocked"}
+    expect: {revision: 2, contradictions_active: 0, integrity: verified}

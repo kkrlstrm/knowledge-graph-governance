@@ -1,0 +1,56 @@
+case: protected_nodes
+guarantee: protected-nodes
+title: "One owner cannot overwrite another owner's protected node"
+# Multi-writer graphs need a way to say "this one is curated, hands off". Without
+# it, the newest agent to run always wins, and a hand-corrected fact silently
+# reverts to whatever the extractor thinks this week.
+
+files:
+  curated: |
+    scope: Northwind
+    source: hand curation
+    date: 2026-07-03
+    declare:
+      entity: [{name: Acme Robotics}]
+    nodes:
+      insight:
+        - tag: acme_dm
+          category: stakeholder.true_dm_vs_apparent_dm
+          statement: "Verified by hand: the VP of Ops signs."
+          entities: [Acme Robotics]
+          evidence_strength: 5
+          protected: true
+
+  agent_overwrite: |
+    scope: Northwind
+    source: extraction run
+    date: 2026-07-20
+    declare:
+      entity: [{name: Acme Robotics}]
+    nodes:
+      insight:
+        - tag: acme_dm
+          category: stakeholder.true_dm_vs_apparent_dm
+          statement: "The CIO signs."
+          entities: [Acme Robotics]
+          evidence_strength: 2
+          supersede: true
+
+steps:
+  - ingest: {file: curated, apply: true, owner: kai}
+
+  # `supersede: true` is not a master key. A foreign owner is blocked outright,
+  # not held — there is nothing for the foreign owner to approve.
+  - ingest: {file: agent_overwrite, apply: true, owner: extractor}
+    expect:
+      items: {insight:acme_dm: blocked}
+      checks_fired: [protected_guard]
+      message_contains: "may not overwrite it"
+
+  # The curated belief is untouched: still revision 1, still the original claim.
+  - explain: {id: "insight:acme_dm"}
+    expect: {revision: 1, versions: 0, integrity: verified}
+
+  # The owner can still revise their own node.
+  - ingest: {file: agent_overwrite, apply: true, owner: kai}
+    expect: {items: {insight:acme_dm: supersede}}

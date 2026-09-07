@@ -3,14 +3,57 @@
 # durable, transferable GTM patterns; the definitions are deliberately
 # org-agnostic. Fork and extend it; every term you add is a reviewable diff, and
 # an insight tagged with a term not defined here is BLOCKed (no taxonomy drift).
+#
+# THE VOCABULARY IS A VERSIONED ARTIFACT, not a config file. It carries its own
+# version, declared aliases, and a deprecation path, because a controlled
+# vocabulary that cannot change is one people route around.
+#
+# Two entry shapes are accepted. A plain string is the definition:
+#
+#     signal.new_hire: "A new leader in the buyer role."
+#
+# A mapping adds curation:
+#
+#     signal.new_hire:
+#       definition: "A new leader in the buyer role."
+#       synonyms: [signal.new_leader]     # DECLARED aliases; folded on read
+#       status: active | deprecated
+#       replaced_by: <term>               # required reading for a deprecation
+#
+# Synonyms are only ever declared, never inferred. Two terms that sound alike are
+# routinely different concepts — an agent's `tool.design` and a developer-tooling
+# `tooling.developer_products` share a word and nothing else — so folding is a
+# curation decision that belongs in this file where it is a reviewable diff.
+#
+# Every edit here changes the schema fingerprint, which invalidates approvals
+# granted under the old vocabulary. That is the intended cost: changing what the
+# graph is allowed to say is a policy change and gets re-reviewed.
+
+version: "2"
+updated: "2026-09-07"
 
 categories:
 
   Buying Signals:      # external, time-bound events that precede a purchase
-    signal.new_hire: "A new leader in the buyer role (typically within ~60 days) — the highest-conversion timing signal in most corpora."
+    signal.new_hire:
+      definition: "A new leader in the buyer role (typically within ~60 days) — the highest-conversion timing signal in most corpora."
+      synonyms: [signal.new_leader, signal.leadership_hire]
+    signal.champion_departure:
+      definition: "The internal champion leaves, stalling an in-flight deal and resetting the buying committee."
+      since: "2"
+      promoted_from_gap: champion-exit-stall
+      # Promoted from the gap layer: two independent scopes named the same
+      # missing mechanic before it became a term. See `kgg gaps`.
     signal.contract_expiration: "A known incumbent-contract end date that structures outreach timing."
     signal.org_change: "Leadership change, reorg, M&A, or rebrand that reopens vendor decisions."
     signal.funding_or_budget_release: "A raise, grant, or fresh budget line that creates a time-bound buying window."
+    signal.budget_release:
+      definition: "Superseded name for a fresh budget line creating a buying window."
+      status: deprecated
+      replaced_by: signal.funding_or_budget_release
+      # Deprecated, not deleted. Deleting it would BLOCK every writer still using
+      # the old name and lose the observations they were carrying; holding it for
+      # approval names the replacement and rewrites the term on the way in.
     signal.regulatory_mandate: "A new rule or standard that creates compliance urgency and a budget justification."
     signal.public_data_trigger: "Public performance/outcome data that signals dissatisfaction or unmet need."
     signal.competitor_sunset: "An incumbent product being deprecated or sunset — a displacement opening."

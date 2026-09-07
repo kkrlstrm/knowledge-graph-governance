@@ -1,0 +1,84 @@
+case: graded_verdicts
+guarantee: graded-verdicts
+title: "One corrupt item is rejected while its siblings apply; a malformed file halts everything"
+# README claim: "Graded verdicts — reject one item, apply the rest."
+# The distinction that matters: BLOCK is about one item, HALT is about the run.
+# A gate with only one severity forces a choice between losing a good batch to
+# one bad row and letting a malformed file through.
+
+files:
+  mixed: |
+    scope: Northwind
+    source: conformance
+    date: 2026-07-03
+    declare:
+      entity: [{name: Acme Robotics}]
+      persona: [{name: Chief Revenue Officer}]
+    nodes:
+      insight:
+        - tag: fine_a
+          category: signal.new_hire
+          statement: "Well formed."
+          entities: [Acme Robotics]
+          evidence_strength: 5
+        - tag: bad_vocab
+          category: signal.invented
+          statement: "Bad category."
+          entities: [Acme Robotics]
+          evidence_strength: 3
+        - tag: bad_ref
+          category: signal.new_hire
+          statement: "Bad reference."
+          entities: [Nobody Ltd]
+          evidence_strength: 3
+        - tag: bad_missing
+          category: signal.new_hire
+          entities: [Acme Robotics]
+          evidence_strength: 3
+        - tag: fine_b
+          category: signal.org_change
+          statement: "Also well formed."
+          entities: [Acme Robotics]
+          personas: [Chief Revenue Officer]
+          evidence_strength: 4
+
+  bad_date: |
+    scope: Northwind
+    source: conformance
+    date: "July 3rd"
+    declare: {entity: [{name: Acme Robotics}]}
+    nodes:
+      insight:
+        - {tag: x, category: signal.new_hire, statement: "s", entities: [Acme Robotics], evidence_strength: 3}
+
+  no_source: |
+    date: 2026-07-03
+    nodes:
+      insight:
+        - {tag: x, category: signal.new_hire, statement: "s", evidence_strength: 3}
+
+steps:
+  # Three different failures, three blocked items, two clean writes.
+  - ingest: {file: mixed, apply: true}
+    expect:
+      items:
+        insight:fine_a: create
+        insight:fine_b: create
+        insight:bad_vocab: blocked
+        insight:bad_ref: blocked
+        insight:bad_missing: blocked
+      applied: {created: 4, blocked: 3}
+      checks_fired: [vocab_membership, refs_exist, required_fields]
+
+  # A run-level defect blocks every item rather than a specific one — the whole
+  # file is suspect, so nothing from it is trusted.
+  - ingest: {file: bad_date}
+    expect:
+      items: {insight:x: blocked}
+      checks_fired: [date_format]
+
+  # A structurally malformed file HALTs before the graph is even read.
+  - ingest: {file: no_source}
+    expect:
+      halted: true
+      halt_reason_contains: "missing required top-level field: source"

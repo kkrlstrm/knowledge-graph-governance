@@ -1,0 +1,88 @@
+case: taxonomy_drift
+guarantee: taxonomy-drift
+title: "An undefined term is BLOCKed; a declared alias folds; a deprecated term is held"
+# README claim: "Controlled vocabulary — undefined terms are blocked."
+# Three outcomes, because "in the list / not in the list" loses the two states a
+# maintained vocabulary actually needs.
+
+files:
+  base: |
+    scope: Northwind
+    source: conformance
+    date: 2026-07-03
+    declare:
+      entity: [{name: Acme Robotics}]
+      persona: [{name: Chief Revenue Officer}]
+    nodes:
+      insight:
+        - tag: good_one
+          category: signal.new_hire
+          statement: "New CRO at Acme."
+          entities: [Acme Robotics]
+          personas: [Chief Revenue Officer]
+          evidence_strength: 5
+        - tag: invented_term
+          category: signal.newhire_v2
+          statement: "The model coined a category."
+          entities: [Acme Robotics]
+          evidence_strength: 3
+
+  alias: |
+    scope: Northwind
+    source: conformance
+    date: 2026-07-03
+    declare:
+      entity: [{name: Acme Robotics}]
+    nodes:
+      insight:
+        - tag: via_alias
+          category: signal.new_leader
+          statement: "Tagged with a declared alias."
+          entities: [Acme Robotics]
+          evidence_strength: 4
+
+  deprecated: |
+    scope: Northwind
+    source: conformance
+    date: 2026-07-03
+    declare:
+      entity: [{name: Acme Robotics}]
+    nodes:
+      insight:
+        - tag: via_deprecated
+          category: signal.budget_release
+          statement: "Tagged with a term that used to be canonical."
+          entities: [Acme Robotics]
+          evidence_strength: 4
+
+steps:
+  # An invented term is refused. Its well-formed sibling is unaffected — the
+  # rejection is per item, not per file.
+  - ingest: {file: base}
+    expect:
+      items: {insight:invented_term: blocked, insight:good_one: create}
+      checks_fired: [vocab_membership]
+      message_contains: "is not in vocabulary"
+
+  # A DECLARED alias folds onto its canonical term and is reported, not silently
+  # rewritten. Nothing is inferred from string similarity.
+  - ingest: {file: alias, apply: true}
+    expect:
+      items: {insight:via_alias: create}
+      checks_fired: [vocab_synonym_folded]
+      message_contains: "folded onto declared canonical term 'signal.new_hire'"
+  - explain: {id: "insight:via_alias"}
+    expect: {exists: true}
+
+  # A deprecated term is HELD, not blocked: the writer used a name that WAS
+  # canonical, and refusing outright turns a rename into data loss.
+  - ingest: {file: deprecated}
+    expect:
+      items: {insight:via_deprecated: held}
+      message_contains: "is deprecated"
+  - approve: {file: deprecated, items: ["insight:via_deprecated"]}
+    expect: {granted: ["insight:via_deprecated"]}
+  - ingest: {file: deprecated, apply: true}
+    expect:
+      items: {insight:via_deprecated: create}
+      detail_contains: "deprecated term rewritten"

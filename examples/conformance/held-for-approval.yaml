@@ -1,0 +1,53 @@
+case: held_for_approval
+guarantee: held-for-approval
+title: "An observation with no home is held and kept as unmapped, never force-fit"
+# README claim: "Held for approval — uncertainty is first-class."
+# The alternative failure is quieter and worse than drift: the model picks the
+# nearest-looking term, and the observation is now filed under a claim it does
+# not support with nothing marking it.
+
+files:
+  novel: |
+    scope: Northwind
+    source: conformance
+    date: 2026-07-03
+    declare:
+      entity: [{name: Acme Robotics}]
+    nodes:
+      insight:
+        - tag: buyers_want_ai_clause
+          statement: "Buyers are asking for an AI-governance clause in the MSA."
+          unmapped_gap: ai-governance-clause
+          unmapped_reason: "Nearest is procurement.compliance_gate, which is about a prerequisite we must satisfy, not a term the buyer adds."
+          entities: [Acme Robotics]
+          evidence_strength: 4
+
+steps:
+  - ingest: {file: novel}
+    expect:
+      items: {insight:buyers_want_ai_clause: held}
+      checks_fired: [unmapped_review]
+
+  # Held means held: applying without approving writes nothing.
+  - ingest: {file: novel, apply: true}
+    expect:
+      items: {insight:buyers_want_ai_clause: held}
+      applied: {unmapped: 0, held: 1}   # the declared entity lands; the held insight does not
+  - explain: {id: "insight:buyers_want_ai_clause"}
+    expect: {exists: false, integrity: invalidated}
+
+  - approve: {file: novel, schema: "examples/gtm/schema.yaml", items: ["insight:buyers_want_ai_clause"]}
+  - ingest: {file: novel, apply: true}
+    expect:
+      items: {insight:buyers_want_ai_clause: create_unmapped}
+      applied: {unmapped: 1}
+
+  # It lands carrying its unmapped status and the gap it named, so it is
+  # findable as an open question rather than indistinguishable from a tagged fact.
+  - explain: {id: "insight:buyers_want_ai_clause"}
+    expect: {exists: true, gap_slug: ai-governance-clause, integrity: verified}
+
+  # Re-ingesting an already-approved unmapped node is idempotent. Fail-closed
+  # creation makes this a real regression risk: a second create would raise.
+  - ingest: {file: novel, apply: true}
+    expect: {items: {insight:buyers_want_ai_clause: unchanged}}

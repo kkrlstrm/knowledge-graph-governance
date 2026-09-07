@@ -3,12 +3,16 @@
     load ingest YAML
       -> structural HALT gate (source + date + a body)
     load + validate the schema (the governance contract itself)
+    load the schema's declared domain check registries        [plugins]
     read existing nodes from the backend (scope-filtered in a SCOPED schema)
-      -> build a PlanContext -> run named checks -> graded findings
+      -> build a PlanContext -> normalise vocab -> run named checks
+      -> graded findings
     resolve per-item actions (create / unchanged / supersede / hold / block)
       -> write a staged proposal (bound to content_hash AND schema_hash)
     on apply, inside one transaction:
       -> stamp provenance, create (fail-closed) / supersede / link
+      -> record gap observations for anything that landed unmapped
+      -> reconcile the contradiction ledger against the post-write graph
     on commit:
       -> append one hash-chained audit entry  (never before the writes land)
 """
@@ -18,14 +22,15 @@ from pathlib import Path
 
 import yaml
 
-from . import audit, proposals, provenance
+from . import audit, contradictions, gaps, proposals, provenance
 from .model import Schema, validate_schema
+from .plugins import load_check_registries
 from .verdicts import Finding, Verdict, RUN, run_halts
 from .checks import (
     PlanContext, run_checks, resolve_actions,
     CREATE, UNCHANGED, SUPERSEDE, CREATE_UNMAPPED, HELD, BLOCKED,
 )
-from .backends.base import Backend, open_backend, GLOBAL_PARTITION
+from .backends.base import Backend, open_backend, GLOBAL_PARTITION, ReadSurfaceMissing
 
 _SECTION_ORDER = {"declare": 0, "node": 1, "unmapped": 2}
 _CONTROL_KEYS = {"supersede", "protected"}
@@ -113,6 +118,41 @@ def apply_plans(backend: Backend, ctx: PlanContext, plans: list, identity_scope:
     return summary
 
 
+def record_gap_observations(backend: Backend, ctx: PlanContext, plans: list) -> dict:
+    """Log the gaps this run's unmapped writes named.
+
+    Best-effort by design: a backend without a gap registry still governs writes
+    correctly, and refusing the whole apply because the registry is unavailable
+    would trade a working gate for a bookkeeping feature.
+    """
+    rows = gaps.observations_from_plans(ctx, plans)
+    if not rows:
+        return {"recorded": 0, "slugs": []}
+    try:
+        n = backend.record_gaps(rows)
+    except ReadSurfaceMissing:
+        return {"recorded": 0, "slugs": [], "skipped": "backend has no gap registry"}
+    return {"recorded": n, "slugs": sorted({r["slug"] for r in rows})}
+
+
+def reconcile_contradictions(backend: Backend, schema: Schema, scope: str,
+                             run_id: str) -> dict:
+    """Re-derive the contradiction ledger from the graph as it now stands.
+
+    Runs after the writes, inside the same transaction, so the ledger can never
+    describe a graph that was rolled back. Idempotent: an unchanged graph
+    produces no ledger changes.
+    """
+    try:
+        nodes = backend.read_nodes(schema, scope)
+        stored = backend.read_contradictions("all")
+    except ReadSurfaceMissing:
+        return {"skipped": "backend has no contradiction ledger"}
+    plan = contradictions.reconcile(schema, nodes, stored, run_id=run_id)
+    return backend.write_contradictions(
+        plan["upsert"], plan["resolve"], plan["reactivate"])
+
+
 def ingest(file: str, schema_path: str, dsn: str, *, apply: bool, owner: str,
            approve_all: bool, proposal_dir: str, audit_log: str) -> dict:
     data = load_ingest(file)
@@ -127,6 +167,7 @@ def ingest(file: str, schema_path: str, dsn: str, *, apply: bool, owner: str,
     if schema_errs:
         return {"schema_invalid": True, "errors": schema_errs, "run_id": run_id}
     schema_hash = schema.fingerprint()
+    domain_checks = load_check_registries(schema.check_specs, base_dir=schema.base_dir)
 
     backend = open_backend(dsn)
     try:
@@ -134,7 +175,7 @@ def ingest(file: str, schema_path: str, dsn: str, *, apply: bool, owner: str,
         identity_scope = scope if schema.scoped else GLOBAL_PARTITION
         existing = backend.read_existing(schema, scope)
         ctx = build_context(data, schema, existing, owner, run_id)
-        findings = halts + run_checks(ctx)
+        findings = halts + run_checks(ctx, extra=domain_checks)
 
         chash = proposals.content_hash(file)
         prior = proposals.find_for_hash(proposal_dir, chash, schema_hash)
@@ -142,7 +183,8 @@ def ingest(file: str, schema_path: str, dsn: str, *, apply: bool, owner: str,
         plans = resolve_actions(ctx, findings, approvals=approvals, approve_all=approve_all)
 
         proposal = proposals.build(run_id, file, owner, ctx.scope, plans, findings,
-                                   schema_hash=schema_hash, identity=schema.identity)
+                                   schema_hash=schema_hash, identity=schema.identity,
+                                   checks=[n for n, _ in domain_checks])
         if prior:
             proposal["approvals"] = prior.get("approvals", [])
         proposals.save(proposal_dir, proposal)
@@ -154,6 +196,8 @@ def ingest(file: str, schema_path: str, dsn: str, *, apply: bool, owner: str,
 
         with backend.transaction():
             summary = apply_plans(backend, ctx, plans, identity_scope)
+            gap_summary = record_gap_observations(backend, ctx, plans)
+            contra_summary = reconcile_contradictions(backend, schema, scope, run_id)
         # Audit is written only after the transaction commits — a rolled-back
         # apply leaves neither graph writes nor an audit entry.
         entry = audit.append(audit_log, {
@@ -161,11 +205,14 @@ def ingest(file: str, schema_path: str, dsn: str, *, apply: bool, owner: str,
             "scope": ctx.scope, "identity": schema.identity, "content_hash": chash,
             "schema_hash": schema_hash,
             "summary": {k: v for k, v in summary.items() if k != "actions"},
+            "gaps": gap_summary, "contradictions": contra_summary,
             "actions": summary.get("actions", []),
         })
         proposal = proposals.mark_applied(proposal, {k: v for k, v in summary.items() if k != "actions"})
         proposals.save(proposal_dir, proposal)
         result["applied"] = summary
+        result["gaps"] = gap_summary
+        result["contradictions"] = contra_summary
         result["audit_entry"] = entry
         return result
     finally:

@@ -1,0 +1,56 @@
+case: composite_identity
+guarantee: composite-identity
+title: "Two kinds sharing a key do not bleed verdicts, approvals, or writes into each other"
+# A node is (kind, key), never a bare key. Key-only resolution would let a
+# blocked insight take down the entity that happens to share its name — and, far
+# worse, let an approval granted for one item silently clear the other.
+
+files:
+  shared: |
+    scope: Northwind
+    source: conformance
+    date: 2026-07-03
+    declare:
+      entity: [{name: atlas}]
+    nodes:
+      insight:
+        - tag: atlas
+          category: signal.invented_term
+          statement: "Blocked for a bad category."
+          entities: [atlas]
+          evidence_strength: 3
+
+  both_held: |
+    scope: Northwind
+    source: conformance
+    date: 2026-07-03
+    declare:
+      entity: [{name: orion}]
+    nodes:
+      insight:
+        - tag: orion
+          statement: "Unmapped, so held."
+          unmapped_gap: effective-size-proxy
+          unmapped_reason: "No fitting term."
+          entities: [orion]
+          evidence_strength: 3
+
+steps:
+  # The insight is blocked; the entity with the same key is unaffected.
+  - ingest: {file: shared, apply: true}
+    expect:
+      items: {insight:atlas: blocked, entity:atlas: create}
+
+  # An approval names a COMPOSITE id, so it cannot leak across kinds.
+  - ingest: {file: both_held}
+    expect: {items: {insight:orion: held, entity:orion: create}}
+  - approve: {file: both_held, schema: "examples/gtm/schema.yaml", items: ["insight:orion"]}
+    expect: {granted: ["insight:orion"], unmatched: []}
+  - ingest: {file: both_held, apply: true}
+    expect: {items: {insight:orion: create_unmapped, entity:orion: create}}
+
+  # Both exist, independently addressable.
+  - explain: {id: "insight:orion"}
+    expect: {exists: true}
+  - explain: {id: "entity:orion"}
+    expect: {exists: true}

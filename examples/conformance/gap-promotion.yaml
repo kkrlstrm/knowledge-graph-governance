@@ -1,0 +1,99 @@
+case: gap_promotion_counts_independence
+guarantee: gap-promotion
+title: "A gap promotes on INDEPENDENT scopes, not on how many times one scope said it"
+# Three observations from one scope is one source with a loud voice. Two scopes
+# that never spoke to each other landing on the same slug is evidence. Counting
+# observations gets that backwards, which is how a single enthusiastic writer
+# talks a term into the vocabulary.
+#
+# This is also the case that shows the whole loop closing: unmapped -> named gap
+# -> independent corroboration -> promotable -> a reviewable vocabulary diff.
+
+files:
+  north_1: |
+    scope: Northwind
+    source: call A
+    date: 2026-07-03
+    nodes:
+      insight:
+        - tag: nw_size_a
+          statement: "Headcount is the wrong size proxy for these buyers."
+          unmapped_gap: effective-size-proxy
+          unmapped_reason: "Nearest is procurement.acv_band_by_segment, which bands by deal size."
+          evidence_strength: 3
+
+  north_2: |
+    scope: Northwind
+    source: call B
+    date: 2026-07-04
+    nodes:
+      insight:
+        - tag: nw_size_b
+          statement: "Their real scale is route density, not staff count."
+          unmapped_gap: effective-size-proxy
+          unmapped_reason: "Same hole as before, different account."
+          evidence_strength: 3
+
+  north_3: |
+    scope: Northwind
+    source: call C
+    date: 2026-07-05
+    nodes:
+      insight:
+        - tag: nw_size_c
+          statement: "Staff count understates the buying capacity here."
+          unmapped_gap: effective-size-proxy
+          unmapped_reason: "Third time this has come up."
+          evidence_strength: 3
+
+  south_1: |
+    scope: Southfield
+    source: call D
+    date: 2026-07-06
+    nodes:
+      insight:
+        - tag: sf_size_a
+          statement: "Vehicle count predicts fit far better than employee count."
+          unmapped_gap: effective-size-proxy
+          unmapped_reason: "Independently the same missing mechanic, different market."
+          evidence_strength: 4
+
+  south_other: |
+    scope: Southfield
+    source: call E
+    date: 2026-07-07
+    nodes:
+      insight:
+        - tag: sf_cal
+          statement: "Purchasing is frozen between budget adoption and the audit sign-off."
+          unmapped_gap: procurement-calendar-lock
+          unmapped_reason: "Nearest is procurement.fiscal_year_boundary, which is about the boundary, not the freeze window inside it."
+          evidence_strength: 3
+
+steps:
+  # Three observations, one scope. Loud, not corroborated.
+  - ingest: {file: north_1, apply: true, approve_all: true}
+  - ingest: {file: north_2, apply: true, approve_all: true}
+  - ingest: {file: north_3, apply: true, approve_all: true}
+  - gaps:
+    expect:
+      slugs: [effective-size-proxy]
+      independent_scopes: {effective-size-proxy: 1}
+      promotable: []
+
+  # A second, independent scope names the same mechanic. Now it is evidence.
+  - ingest: {file: south_1, apply: true, approve_all: true}
+  - gaps:
+    expect:
+      independent_scopes: {effective-size-proxy: 2}
+      promotable: [effective-size-proxy]
+
+  # A second gap with one scope stays open, and both are handed to the next
+  # writer via known_gaps — convergence on a closed set is a lookup, convergence
+  # on an open set is telepathy.
+  - ingest: {file: south_other, apply: true, approve_all: true}
+  - gaps:
+    expect:
+      count: 2
+      promotable: [effective-size-proxy]
+      known_gaps_slugs: [effective-size-proxy, procurement-calendar-lock]

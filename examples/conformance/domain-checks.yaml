@@ -1,0 +1,101 @@
+case: domain_checks_extend_the_gate
+guarantee: domain-checks
+title: "A schema-declared check pack adds rules, is inside the fingerprint, and cannot shadow the kernel"
+# The kernel enforces what is true of any governed graph. Domain rules are yours,
+# and they are declared in the SCHEMA rather than on the command line — so the
+# set of enforced rules is inside the schema fingerprint, and weakening the gate
+# invalidates every approval granted under the strong one.
+
+files:
+  strict_schema: |
+    name: gtm-strict
+    identity: global
+    scope_label: account
+    checks:
+      - domain_checks.py:REGISTRY
+    vocabularies:
+      tax: strict_vocab.yaml
+    node_kinds:
+      insight:
+        key: tag
+        required: [statement]
+        vocab_fields: {category: tax}
+        content_fields: [statement]
+        supersedable: true
+  strict_vocab.yaml: |
+    terms:
+      signal.new_hire: "A new leader in the buyer role."
+  domain_checks.py: |
+    from kgg.verdicts import Finding, Verdict
+
+    def check_review_date_set(ctx):
+        out = []
+        for section, kind, item in ctx.sections():
+            if kind == "insight" and not item.get("review_after"):
+                out.append(Finding("review_date_set", ctx.iid_of(kind, item), Verdict.BLOCK,
+                                   "no `review_after` — a fact with no expiry outlives its "
+                                   "shelf life while still reading as current"))
+        return out
+
+    REGISTRY = [("review_date_set", check_review_date_set)]
+
+  # A pack that tries to redefine a kernel guarantee.
+  shadow_schema: |
+    name: gtm-shadow
+    identity: global
+    checks:
+      - shadow_checks.py:REGISTRY
+    vocabularies:
+      tax: strict_vocab.yaml
+    node_kinds:
+      insight:
+        key: tag
+        required: [statement]
+        vocab_fields: {category: tax}
+        content_fields: [statement]
+  shadow_checks.py: |
+    REGISTRY = [("vocab_membership", lambda ctx: [])]
+
+  missing_schema: |
+    name: gtm-missing
+    identity: global
+    checks:
+      - not_a_real_module:REGISTRY
+    vocabularies:
+      tax: strict_vocab.yaml
+    node_kinds:
+      insight: {key: tag, required: [statement], vocab_fields: {category: tax}}
+
+  body: |
+    scope: Northwind
+    source: conformance
+    date: 2026-07-03
+    nodes:
+      insight:
+        - tag: no_expiry
+          category: signal.new_hire
+          statement: "A fact with no shelf life declared."
+        - tag: has_expiry
+          category: signal.new_hire
+          statement: "A fact that says when to re-check it."
+          review_after: "2030-01-01"
+
+steps:
+  # The domain rule fires by name, alongside the kernel's rules.
+  - ingest: {file: body, schema: strict_schema, apply: true}
+    expect:
+      items: {insight:no_expiry: blocked, insight:has_expiry: create}
+      checks_fired: [review_date_set]
+      message_contains: "outlives its shelf life"
+
+  # A pack cannot take over a core check name — that would replace the
+  # taxonomy-drift guarantee with whatever it felt like, silently.
+  - validate_schema: {schema: shadow_schema}
+    expect: {valid: false, errors_contain: "shadows a kernel check"}
+
+  # An unloadable pack fails the contract closed. Skipping it would mean running
+  # with fewer rules than the schema says are in force.
+  - validate_schema: {schema: missing_schema}
+    expect: {valid: false, errors_contain: "cannot import"}
+  - ingest: {file: body, schema: missing_schema}
+    expect: {schema_invalid: true, schema_errors_contain: "cannot import"}

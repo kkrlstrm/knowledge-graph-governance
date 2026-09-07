@@ -1,0 +1,61 @@
+case: phantom_nodes
+guarantee: phantom-nodes
+title: "A stray reference cannot conjure an account; closed kinds must be declared"
+# README claim: "No implicit creation — closed kinds must be declared."
+# The failure this prevents: an insight mentions "Ghost Corp", the graph grows a
+# Ghost Corp node, and from then on it looks like an account somebody researched.
+
+files:
+  dangling: |
+    scope: Northwind
+    source: conformance
+    date: 2026-07-03
+    nodes:
+      insight:
+        - tag: dangling_ref
+          category: signal.new_hire
+          statement: "References an account nobody declared."
+          entities: [Ghost Corp]
+          evidence_strength: 3
+
+  implicit_closed: |
+    scope: Northwind
+    source: conformance
+    date: 2026-07-03
+    nodes:
+      entity:
+        - name: Snuck In Ltd
+
+  declared: |
+    scope: Northwind
+    source: conformance
+    date: 2026-07-03
+    declare:
+      entity: [{name: Ghost Corp}]
+    nodes:
+      insight:
+        - tag: dangling_ref
+          category: signal.new_hire
+          statement: "References an account nobody declared."
+          entities: [Ghost Corp]
+          evidence_strength: 3
+
+steps:
+  - ingest: {file: dangling}
+    expect:
+      items: {insight:dangling_ref: blocked}
+      checks_fired: [refs_exist]
+      message_contains: "which doesn't exist"
+
+  # A closed kind cannot be created by appearing in `nodes:` either — `declare:`
+  # is the only door, so creating an account is always a deliberate act.
+  - ingest: {file: implicit_closed}
+    expect:
+      items: {entity:Snuck In Ltd: blocked}
+      checks_fired: [implicit_create_guard]
+      message_contains: "must be declared under"
+
+  # Declaring it is all it takes. The gate is asking for intent, not paperwork.
+  - ingest: {file: declared, apply: true}
+    expect:
+      items: {entity:Ghost Corp: create, insight:dangling_ref: create}

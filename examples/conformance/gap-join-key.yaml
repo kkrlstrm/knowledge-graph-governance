@@ -1,0 +1,106 @@
+case: gap_slug_is_a_join_key
+guarantee: gap-promotion
+title: "An unmapped item must name its gap in a slug a SECOND writer could reach"
+# Unmapped is a proposal, and a proposal nobody can join to another proposal dies
+# alone. The slug is the join key.
+#
+# The failure this encodes is measured, not imagined: when unmapped items were
+# keyed per-observation, 280 of them produced 223 distinct names and not one gap
+# was ever named by two independent sources. Every gap therefore died exactly as
+# it would have with no key at all.
+#
+# So the slug is validated for the one property that makes it joinable: it has to
+# name the MECHANIC. A slug that names the account it came from is unique by
+# construction and reachable by nobody.
+
+files:
+  no_slug: |
+    scope: Northwind
+    source: conformance
+    date: 2026-07-03
+    nodes:
+      insight:
+        - tag: nameless
+          statement: "A real mechanic with no home and no name."
+          evidence_strength: 3
+
+  instance_named: |
+    scope: Northwind
+    source: conformance
+    date: 2026-07-03
+    nodes:
+      insight:
+        - tag: instance_slug
+          statement: "Named after the account it came from."
+          unmapped_gap: northwind-tourist-town-thing
+          unmapped_reason: "No tag covers this."
+          evidence_strength: 3
+
+  non_naming: |
+    scope: Northwind
+    source: conformance
+    date: 2026-07-03
+    nodes:
+      insight:
+        - tag: empty_slug
+          statement: "Named after the writer's state, not the mechanic."
+          unmapped_gap: no-tag-for-this
+          unmapped_reason: "Could not find one."
+          evidence_strength: 3
+
+  malformed: |
+    scope: Northwind
+    source: conformance
+    date: 2026-07-03
+    nodes:
+      insight:
+        - tag: shouty
+          statement: "Wrong shape entirely."
+          unmapped_gap: Effective_Size_Proxy
+          unmapped_reason: "Headcount is the wrong size proxy."
+          evidence_strength: 3
+
+  good: |
+    scope: Northwind
+    source: conformance
+    date: 2026-07-03
+    nodes:
+      insight:
+        - tag: proper
+          statement: "Headcount is the wrong size proxy for these buyers; route density is."
+          unmapped_gap: effective-size-proxy
+          unmapped_reason: "Nearest is procurement.acv_band_by_segment, which bands by deal size, not by the operational measure that predicts fit."
+          evidence_strength: 4
+
+steps:
+  - ingest: {file: no_slug}
+    expect:
+      items: {insight:nameless: blocked}
+      checks_fired: [unmapped_gap_named]
+      message_contains: "name the missing mechanic"
+
+  # The important one. Syntactically perfect, joinable by nobody.
+  - ingest: {file: instance_named}
+    expect:
+      items: {insight:instance_slug: blocked}
+      message_contains: "names the scope it came from"
+
+  - ingest: {file: non_naming}
+    expect:
+      items: {insight:empty_slug: blocked}
+      message_contains: "names the writer's state"
+
+  - ingest: {file: malformed}
+    expect:
+      items: {insight:shouty: blocked}
+      message_contains: "kebab-case"
+
+  # A well-formed gap is held for review like any unmapped item, then recorded.
+  - ingest: {file: good}
+    expect: {items: {insight:proper: held}}
+  - ingest: {file: good, apply: true, approve_all: true}
+    expect:
+      items: {insight:proper: create_unmapped}
+      gap_slugs: [effective-size-proxy]
+  - gaps:
+    expect: {slugs: [effective-size-proxy], independent_scopes: {effective-size-proxy: 1}}

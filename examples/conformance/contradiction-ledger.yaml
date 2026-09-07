@@ -1,0 +1,92 @@
+case: contradiction_ledger
+guarantee: contradiction-ledger
+title: "Two active claims that disagree are both held, both readable, and neither wins"
+# Supersession answers "the belief changed." It cannot answer "two sources
+# disagree right now", and collapsing the second into the first asserts that the
+# newer claim won when all that is established is that they conflict.
+
+files:
+  first: |
+    scope: Northwind
+    source: call with the CFO
+    date: 2026-07-03
+    declare:
+      entity: [{name: Acme Robotics}]
+      persona: [{name: Chief Revenue Officer}]
+    nodes:
+      insight:
+        - tag: acme_budget_a
+          category: procurement.fiscal_year_boundary
+          statement: "Acme has budget approved for the platform this fiscal year."
+          entities: [Acme Robotics]
+          personas: [Chief Revenue Officer]
+          evidence_strength: 4
+
+  second: |
+    scope: Northwind
+    source: call with the procurement lead
+    date: 2026-07-10
+    declare:
+      entity: [{name: Acme Robotics}]
+      persona: [{name: Chief Revenue Officer}]
+    nodes:
+      insight:
+        - tag: acme_budget_b
+          category: procurement.fiscal_year_boundary
+          statement: "Acme has not approved budget for the platform this fiscal year."
+          entities: [Acme Robotics]
+          personas: [Chief Revenue Officer]
+          evidence_strength: 4
+
+  unrelated: |
+    scope: Northwind
+    source: another call
+    date: 2026-07-11
+    declare:
+      entity: [{name: Acme Robotics}]
+      persona: [{name: Chief Revenue Officer}]
+    nodes:
+      insight:
+        - tag: acme_unrelated
+          category: procurement.fiscal_year_boundary
+          statement: "Purchasing runs through a regional cooperative agreement."
+          entities: [Acme Robotics]
+          personas: [Chief Revenue Officer]
+          evidence_strength: 3
+
+steps:
+  - ingest: {file: first, apply: true}
+  - contradictions: {state: all}
+    expect: {count: 0}
+
+  # Same slot (same account, role, mechanic), high lexical overlap, one side
+  # negated. Deterministic — no model call decides this.
+  - ingest: {file: second, apply: true}
+  - contradictions: {state: active}
+    expect:
+      count: 1
+      detectors: [negation_mismatch]
+      pairs: [["insight:acme_budget_a", "insight:acme_budget_b"]]
+      snapshots_retained: true
+
+  # NEITHER claim is downgraded. Both stay active at revision 1 with their own
+  # provenance; the ledger makes the disagreement findable, it does not resolve it.
+  - explain: {id: "insight:acme_budget_a"}
+    expect: {revision: 1, integrity: verified, contradictions_active: 1,
+             contradicts_with: ["insight:acme_budget_b"]}
+  - explain: {id: "insight:acme_budget_b"}
+    expect: {revision: 1, integrity: verified, contradictions_active: 1,
+             contradicts_with: ["insight:acme_budget_a"]}
+
+  # A third claim in the same slot that simply says something ELSE is not a
+  # disagreement. Sharing a slot is necessary and nowhere near sufficient — a
+  # detector that fired on the slot alone would report every pair.
+  - ingest: {file: unrelated, apply: true}
+  - contradictions: {state: active}
+    expect: {count: 1}
+
+  # Re-running over an unchanged graph produces no new rows. The ledger records
+  # disagreements, not the history of the job having run.
+  - ingest: {file: unrelated, apply: true}
+  - contradictions: {state: all}
+    expect: {count: 1}

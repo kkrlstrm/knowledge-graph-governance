@@ -1,0 +1,69 @@
+case: silent_overwrite
+guarantee: silent-overwrite
+title: "A changed belief is held, then versioned — the prior belief stays addressable"
+# README claim: "Supersession — the prior belief is versioned, not dropped."
+
+files:
+  v1: |
+    scope: Northwind
+    source: Q3 discovery calls
+    date: 2026-07-03
+    declare:
+      entity: [{name: Acme Robotics}]
+    nodes:
+      insight:
+        - tag: acme_dm
+          category: stakeholder.true_dm_vs_apparent_dm
+          statement: "The VP of Ops signs, not the CIO."
+          entities: [Acme Robotics]
+          evidence_strength: 3
+
+  v2: |
+    scope: Northwind
+    source: Q4 discovery calls
+    date: 2026-10-01
+    declare:
+      entity: [{name: Acme Robotics}]
+    nodes:
+      insight:
+        - tag: acme_dm
+          category: stakeholder.true_dm_vs_apparent_dm
+          statement: "After the reorg the CIO signs after all."
+          entities: [Acme Robotics]
+          evidence_strength: 5
+
+steps:
+  - ingest: {file: v1, apply: true}
+    expect: {items: {insight:acme_dm: create}}
+
+  # Re-ingesting identical content is a true no-op, not a revision. A gate that
+  # bumped the revision on every re-run would make the version chain a log of how
+  # often the job ran rather than of how often the belief changed.
+  - ingest: {file: v1, apply: true}
+    expect:
+      items: {insight:acme_dm: unchanged}
+      applied: {unchanged: 2, superseded: 0, created: 0}   # the insight and its declared entity
+
+  # Changed content is HELD. Overwriting is never the default, and neither is
+  # dropping the new observation on the floor.
+  - ingest: {file: v2}
+    expect:
+      items: {insight:acme_dm: held}
+      checks_fired: [collision]
+      message_contains: "exists with different content"
+
+  - approve: {file: v2, items: ["insight:acme_dm"]}
+    expect: {granted: ["insight:acme_dm"]}
+  - ingest: {file: v2, apply: true}
+    expect:
+      items: {insight:acme_dm: supersede}
+      applied: {superseded: 1}
+
+  # The prior belief is still there and still readable, with the run that
+  # replaced it recorded against it.
+  - explain: {id: "insight:acme_dm"}
+    expect:
+      revision: 2
+      versions: 1
+      prior_claims: ["The VP of Ops signs, not the CIO."]
+      integrity: verified

@@ -1,0 +1,97 @@
+case: schema_validation
+guarantee: schema-validation
+title: "The governance contract is itself validated before it is allowed to govern anything"
+# An invalid contract is the worst failure mode available: it looks like
+# governance and enforces nothing. A vocab_field pointing at a vocabulary that
+# does not exist silently accepts every value in that field.
+
+files:
+  broken: |
+    name: broken
+    identity: sideways
+    vocabularies: {tax: v.yaml}
+    node_kinds:
+      'in:sight':
+        key: tag
+        vocab_fields: {category: nosuchvocab}
+        refs: {entities: ghostkind}
+  v: |
+    terms:
+      cat.a: "A category."
+
+  # A structurally valid ingest file, so the run reaches schema validation
+  # instead of halting on its own shape first.
+  body: |
+    scope: N
+    source: conformance
+    date: 2026-07-03
+    nodes:
+      insight:
+        - {tag: x, category: cat.a, statement: "s"}
+
+  bad_slot: |
+    name: badslot
+    identity: global
+    vocabularies: {tax: v.yaml}
+    node_kinds:
+      insight:
+        key: tag
+        content_fields: [statement]
+        claim_field: nowhere
+        claim_slot: [entities]
+
+  bad_vocab_terms: |
+    name: badvocab
+    identity: global
+    vocabularies: {tax: circular.yaml}
+    node_kinds:
+      insight: {key: tag, vocab_fields: {category: tax}, content_fields: [statement]}
+  circular: |
+    categories:
+      Cat:
+        term.a:
+          definition: "A."
+          synonyms: [term.b]
+        term.b:
+          definition: "Also a real term, and claimed as an alias of term.a."
+
+  dead_replacement: |
+    name: deadrepl
+    identity: global
+    vocabularies: {tax: dead.yaml}
+    node_kinds:
+      insight: {key: tag, vocab_fields: {category: tax}, content_fields: [statement]}
+  dead: |
+    categories:
+      Cat:
+        term.old:
+          definition: "Retired."
+          status: deprecated
+          replaced_by: term.that.never.existed
+
+steps:
+  - validate_schema: {schema: broken}
+    expect: {valid: false, errors_contain: "unknown vocabulary"}
+  # An invalid contract stops the run before the graph is even opened.
+  - ingest: {file: body, schema: broken}
+    expect:
+      schema_invalid: true
+      schema_errors_contain: "must not contain"
+
+  # A claim_field outside content_fields makes contradictions unreachable: the
+  # field a detector reads is one supersession does not compare.
+  - validate_schema: {schema: bad_slot}
+    expect: {valid: false, errors_contain: "not in content_fields"}
+
+  # A term cannot be both canonical and an alias of another term — resolution
+  # would depend on lookup order.
+  - validate_schema: {schema: bad_vocab_terms}
+    expect: {valid: false, errors_contain: "cannot fold onto another term"}
+
+  # A deprecation that points nowhere strands every writer still using the term.
+  - validate_schema: {schema: dead_replacement}
+    expect: {valid: false, errors_contain: "which is not a term in this vocabulary"}
+
+  # The shipped example pack must itself be valid.
+  - validate_schema: {schema: "examples/gtm/schema.yaml"}
+    expect: {valid: true}

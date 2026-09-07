@@ -49,10 +49,29 @@ nodes:
 
 # An observation with no controlled-vocabulary home is held for review, never
 # force-fit into a category that doesn't apply.
+#
+# `unmapped_gap` is REQUIRED, and it is a join key rather than a label: a second
+# writer, reading a different source in a different market, has to be able to land
+# on the same slug, or this gap can never accumulate the independent evidence that
+# would promote it into the vocabulary. So it names the MECHANIC in 2-6 kebab-case
+# words — never the account it came from (unique by construction, reachable by
+# nobody), and never the writer's state ("no-tag-for-this" names nothing, and
+# every unrelated gap falls into it).
+#
+# The nuance goes in `unmapped_reason`, which a human reads. Keep it out of the
+# slug: prose is not a join key, and a longer description makes two accounts of
+# one gap converge LESS often, not more.
+#
+#   kgg gaps          # ranked by independent scopes
+#   kgg gaps known    # the list to hand the next writer, so matching is a lookup
 unmapped_for_review:
   - tag: buyers_asking_for_ai_governance_clause
     kind: insight
     statement: >
       Two buyers asked us to add an AI-governance clause to the MSA. Novel — no
       existing category fits.
-    note: candidate for a new procurement.* term if it recurs
+    unmapped_gap: ai-governance-clause
+    unmapped_reason: >
+      Nearest is procurement.compliance_gate, which covers a prerequisite WE must
+      satisfy in order to sell. This is a term the BUYER adds to our contract —
+      the direction is reversed, so it is a near miss rather than a fit.

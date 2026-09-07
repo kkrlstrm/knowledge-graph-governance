@@ -1,0 +1,70 @@
+case: approvals_bound_to_policy
+guarantee: approvals-bound-to-policy
+title: "An approval binds to the contract it was granted under, on every path that grants one"
+# README claim: "Approvals are bound to policy — matched to the file content hash
+# AND the schema fingerprint."
+#
+# This case exists because that guarantee held on the ingest path and not on the
+# approve path: approving by --file selected a proposal by content hash alone, so
+# an approval could attach to a proposal built under a different contract, ingest
+# would then filter on both hashes, find nothing, and leave the item held. The
+# human approved, nothing happened, and the exit code was 0.
+
+files:
+  held: |
+    scope: Northwind
+    source: conformance
+    date: 2026-07-03
+    nodes:
+      insight:
+        - tag: no_home_yet
+          statement: "A real mechanic the taxonomy has no word for."
+          unmapped_gap: champion-exit-stall
+          unmapped_reason: "Nearest is stakeholder.gatekeeper_block, which is about access, not a stalled deal."
+          evidence_strength: 4
+
+  # A second, DIFFERENT governance contract over the same node kinds.
+  other_vocab: |
+    terms:
+      cat.a: "A category."
+  other_schema: |
+    name: other
+    identity: global
+    vocabularies: {tax: other_vocab.yaml}
+    node_kinds:
+      insight:
+        key: tag
+        required: [statement]
+        vocab_fields: {category: tax}
+        content_fields: [statement]
+        supersedable: true
+
+steps:
+  - ingest: {file: held}
+    expect: {items: {insight:no_home_yet: held}}
+
+  # Same file, dry-run under a different contract. Two proposals now exist for
+  # one content hash.
+  - ingest: {file: held, schema: other_schema}
+    expect: {items: {insight:no_home_yet: held}}
+
+  # Approving by file alone is now ambiguous, and the tool refuses rather than
+  # picking the newest.
+  - approve: {file: held, bind_schema: false}
+    expect: {ambiguous: true}
+
+  # Bound to the GTM contract, the approval is granted.
+  - approve: {file: held, schema: "examples/gtm/schema.yaml", items: ["insight:no_home_yet"]}
+    expect: {granted: ["insight:no_home_yet"]}
+
+  # THE GUARANTEE: that approval clears the item under the contract it was
+  # granted under, and under no other. Checked before anything is written —
+  # once the node exists, an identical re-ingest is a no-op under every contract
+  # and would mask the difference.
+  - ingest: {file: held, schema: other_schema}
+    expect: {items: {insight:no_home_yet: held}}
+  - ingest: {file: held}
+    expect: {items: {insight:no_home_yet: create_unmapped}}
+
+  - ingest: {file: held, apply: true}
+    expect: {items: {insight:no_home_yet: create_unmapped}}

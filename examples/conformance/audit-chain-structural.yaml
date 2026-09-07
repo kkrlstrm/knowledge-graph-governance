@@ -1,0 +1,40 @@
+case: audit_chain_structural
+guarantee: audit-chain
+title: "A deleted entry and a reordered log are both detected, not just an edited payload"
+# Deletion is the tampering that matters most: an attacker removing the record of
+# the write they made leaves a log that is shorter and otherwise plausible. The
+# chain catches it because the surviving entry's prev_hash no longer resolves.
+
+files:
+  a: |
+    scope: N
+    source: run-a
+    date: 2026-07-03
+    declare: {entity: [{name: Acme Robotics}]}
+    nodes:
+      insight:
+        - {tag: one, category: signal.new_hire, statement: "First.", entities: [Acme Robotics], evidence_strength: 3}
+  b: |
+    scope: N
+    source: run-b
+    date: 2026-07-04
+    declare: {entity: [{name: Beta Inc}]}
+    nodes:
+      insight:
+        - {tag: two, category: signal.org_change, statement: "Second.", entities: [Beta Inc], evidence_strength: 3}
+  c: |
+    scope: N
+    source: run-c
+    date: 2026-07-05
+    declare: {entity: [{name: Gamma LLC}]}
+    nodes:
+      insight:
+        - {tag: three, category: signal.org_change, statement: "Third.", entities: [Gamma LLC], evidence_strength: 3}
+
+steps:
+  - ingest: {file: a, apply: true}
+  - ingest: {file: b, apply: true}
+  - ingest: {file: c, apply: true}
+  - tamper: {how: drop, line: 2}
+  - verify_audit:
+    expect: {ok: false, broken_at: 2, reason_contains: "inserted/removed/reordered"}

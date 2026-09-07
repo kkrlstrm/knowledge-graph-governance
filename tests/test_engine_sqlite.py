@@ -172,6 +172,8 @@ unmapped_for_review:
   - tag: novel_thing
     kind: insight
     statement: "no home yet"
+    unmapped_gap: ai-governance-clause
+    unmapped_reason: "Nearest is procurement.compliance_gate, which is about a prerequisite we must satisfy."
 """
         r = e.run(e.write(txt))
         assert e.actions(r)["novel_thing"] == HELD

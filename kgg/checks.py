@@ -20,8 +20,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from .model import Schema, NodeKind, ExistingNode, iid
-from .verdicts import Finding, Verdict, RUN, item_verdict
+from .model import (
+    Schema, NodeKind, ExistingNode, iid,
+    EXACT, SYNONYM, DEPRECATED_HIT, UNKNOWN,
+)
+from .verdicts import Finding, Verdict, RUN, item_verdict, worst
 
 
 # ---------------------------------------------------------------------------
@@ -66,12 +69,54 @@ class PlanContext:
         for it in self.unmapped:
             yield ("unmapped", it.get("kind", _default_kind(self.schema)), it)
 
+    def unmapped_items(self):
+        """(kind, key, item) for everything with no controlled-vocabulary home.
+
+        Two ways to be unmapped and they are the same thing to every downstream
+        consumer: listed under `unmapped_for_review`, or carried as a node whose
+        controlled field is explicitly null. Treating them as one list is what
+        lets the gap layer see both.
+        """
+        for it in self.unmapped:
+            kind = it.get("kind", _default_kind(self.schema))
+            yield kind, self.key_of(kind, it), it
+        for kind, items in self.nodes.items():
+            nk = self.schema.kind(kind)
+            if not nk or not nk.vocab_fields:
+                continue
+            for it in items:
+                if any(it.get(f) is None for f in nk.vocab_fields):
+                    yield kind, self.key_of(kind, it), it
+
+    def slot_of(self, kind: str, item: dict) -> str:
+        """Serialised `claim_slot` — what this node is a claim ABOUT.
+
+        Two active nodes sharing a slot are competing claims about one thing;
+        that is the anchor a contradiction detector needs. Empty when the kind
+        declares no slot, which disables detection for that kind.
+        """
+        nk = self.schema.kind(kind)
+        if not nk or not nk.claim_slot:
+            return ""
+        return slot_value(nk, item)
+
 
 def _default_kind(schema: Schema) -> str:
     for name, nk in schema.kinds.items():
         if nk.vocab_fields:
             return name
     return next(iter(schema.kinds), "node")
+
+
+def slot_value(nk: NodeKind, item: dict) -> str:
+    """Stable serialisation of a kind's claim_slot fields from one item."""
+    parts = []
+    for f in nk.claim_slot:
+        v = item.get(f)
+        if isinstance(v, list):
+            v = "|".join(sorted(str(x) for x in v))
+        parts.append(f"{f}={'' if v is None else v}")
+    return "&".join(parts)
 
 
 def _content_changed(item: dict, nk: NodeKind, ex: ExistingNode) -> bool:
@@ -132,6 +177,20 @@ def check_required_fields(ctx: PlanContext) -> list[Finding]:
 
 
 def check_vocab_membership(ctx: PlanContext) -> list[Finding]:
+    """Controlled vocabulary, with a declared alias and deprecation path.
+
+    Four outcomes, because "in the list / not in the list" loses the two states
+    that matter most to a vocabulary that is maintained rather than frozen:
+
+      exact       silent
+      synonym     folded onto the canonical term, reported (the fold happened in
+                  `normalize_vocab` before this ran, so this only ever sees it
+                  as exact — the finding is emitted there)
+      deprecated  REQUIRE_APPROVAL, naming the replacement. Not a block: the
+                  writer used a term that WAS canonical, and refusing outright
+                  turns a rename into data loss.
+      unknown     BLOCK — this is the taxonomy-drift guarantee
+    """
     out = []
     for section, kind, item in ctx.sections():
         nk = ctx.schema.kind(kind)
@@ -142,10 +201,89 @@ def check_vocab_membership(ctx: PlanContext) -> list[Finding]:
             if val is None:
                 continue  # null handled by unmapped_review
             vocab = ctx.schema.vocabularies.get(vname)
-            if vocab is not None and val not in vocab:
+            if vocab is None:
+                continue
+            canonical, how = vocab.resolve(val)
+            if how == UNKNOWN:
                 out.append(Finding("vocab_membership", ctx.iid_of(kind, item), Verdict.BLOCK,
                                    f"{fieldname}='{val}' is not in vocabulary '{vname}'; "
-                                   f"fix it, or set null and list under unmapped_for_review"))
+                                   f"fix it, or set null and name the gap in `unmapped_gap`"))
+            elif how == DEPRECATED_HIT:
+                out.append(Finding("vocab_membership", ctx.iid_of(kind, item),
+                                   Verdict.REQUIRE_APPROVAL,
+                                   f"{fieldname}='{val}' is deprecated in '{vname}'"
+                                   + (f"; replaced by '{canonical}'" if canonical != val else "")
+                                   + " — approve to write it under the replacement",
+                                   severity="warn",
+                                   data={"vocab_replace": [fieldname, val, canonical]}))
+    return out
+
+
+def normalize_vocab(ctx: PlanContext) -> list[Finding]:
+    """Fold DECLARED synonyms onto their canonical term, before any check runs.
+
+    Normalise-on-read, so a file written against an alias lands under the
+    canonical term and stays retrievable by it. The fold is reported, never
+    silent — an unreported rewrite of a writer's term is how you lose the ability
+    to tell a curated alias from a model that invented one.
+
+    Only aliases declared in the vocabulary file fold. Nothing is inferred from
+    string similarity: two terms that sound alike are routinely different
+    concepts, and a gate that guessed would merge them with no diff to review.
+    """
+    out = []
+    for section, kind, item in ctx.sections():
+        nk = ctx.schema.kind(kind)
+        if not nk:
+            continue
+        for fieldname, vname in nk.vocab_fields.items():
+            val = item.get(fieldname)
+            vocab = ctx.schema.vocabularies.get(vname)
+            if val is None or vocab is None:
+                continue
+            canonical, how = vocab.resolve(val)
+            if how == SYNONYM and canonical:
+                item[fieldname] = canonical
+                out.append(Finding("vocab_synonym_folded", ctx.iid_of(kind, item), Verdict.ALLOW,
+                                   f"{fieldname}='{val}' folded onto declared canonical term "
+                                   f"'{canonical}' in '{vname}'",
+                                   severity="info",
+                                   data={"folded": [fieldname, val, canonical]}))
+    return out
+
+
+def check_unmapped_gap_named(ctx: PlanContext) -> list[Finding]:
+    """An unmapped observation must name the GAP it found, with a joinable slug.
+
+    Unmapped is a first-class answer, but it is a *proposal*, not a resting
+    place — and a proposal nobody can join to another proposal dies alone. The
+    slug is the join key: two writers reading different sources who hit the same
+    missing mechanic must be able to land on the same short string, or the gap
+    can never accumulate the independent evidence that promotes it into the
+    vocabulary.
+
+    Prose cannot do this job. A longer `unmapped_reason` inflates the overlap
+    denominator between two descriptions of one gap and makes convergence
+    strictly harder — richer reasons measurably drove cross-writer gap merges
+    down, not up. So the slug is short and canonical, and the nuance goes in the
+    reason where a human reads it.
+    """
+    if not ctx.schema.require_gap_slug:
+        return []
+    from .gaps import validate_slug
+    out = []
+    for kind, key, item in ctx.unmapped_items():
+        _id = iid(kind, key)
+        slug = (item.get("unmapped_gap") or "").strip()
+        if not slug:
+            out.append(Finding("unmapped_gap_named", _id, Verdict.BLOCK,
+                               "has no controlled-vocabulary home and no `unmapped_gap` slug; "
+                               "name the missing mechanic in 2-6 kebab-case words so a second "
+                               "writer who finds the same hole lands on the same key"))
+            continue
+        for problem in validate_slug(slug, scope=ctx.scope):
+            out.append(Finding("unmapped_gap_named", _id, Verdict.BLOCK,
+                               f"unmapped_gap '{slug}': {problem}"))
     return out
 
 
@@ -255,31 +393,52 @@ def check_unmapped_review(ctx: PlanContext) -> list[Finding]:
     conflict/supersede), so an already-approved unmapped node isn't re-created.
     """
     out = []
-    for it in ctx.unmapped:
-        kind = it.get("kind", _default_kind(ctx.schema))
-        if (kind, ctx.key_of(kind, it)) in ctx.existing:
+    for kind, key, item in ctx.unmapped_items():
+        if (kind, key) in ctx.existing:
             continue
-        out.append(Finding("unmapped_review", ctx.iid_of(kind, it), Verdict.REQUIRE_APPROVAL,
-                           f"'{ctx.key_of(kind, it)}' has no controlled-vocabulary home — "
-                           f"held for human review", severity="warn",
-                           data={"action": "unmapped"}))
-    for kind, items in ctx.nodes.items():
-        nk = ctx.schema.kind(kind)
-        if not nk or not nk.vocab_fields:
-            continue
-        for item in items:
-            if (kind, ctx.key_of(kind, item)) in ctx.existing:
-                continue
-            if any(item.get(f) is None for f in nk.vocab_fields):
-                out.append(Finding("unmapped_review", ctx.iid_of(kind, item),
-                                   Verdict.REQUIRE_APPROVAL,
-                                   f"'{ctx.key_of(kind, item)}' has a null controlled field — "
-                                   f"will load as unmapped; approve to confirm",
-                                   severity="warn", data={"action": "unmapped"}))
+        gap = (item.get("unmapped_gap") or "").strip()
+        out.append(Finding("unmapped_review", iid(kind, key), Verdict.REQUIRE_APPROVAL,
+                           f"'{key}' has no controlled-vocabulary home"
+                           + (f" — gap '{gap}'" if gap else "")
+                           + "; held for human review", severity="warn",
+                           data={"action": "unmapped", "gap": gap}))
     return out
 
 
-CHECK_REGISTRY = [
+def check_contradicts_ref(ctx: PlanContext) -> list[Finding]:
+    """A declared `contradicts:` target must be a real node, and not itself.
+
+    The contradiction ledger is advisory — it never changes what the graph
+    believes — but a pointer into nothing is still a broken record, and a node
+    that contradicts itself is a writer bug worth catching at the gate.
+    """
+    out = []
+    for section, kind, item in ctx.sections():
+        targets = item.get("contradicts")
+        if targets is None:
+            continue
+        if not isinstance(targets, list):
+            targets = [targets]
+        _id = ctx.iid_of(kind, item)
+        for t in targets:
+            tk, _, tkey = str(t).partition(":")
+            if not tkey:
+                out.append(Finding("contradicts_ref", _id, Verdict.BLOCK,
+                                   f"contradicts '{t}' is not a composite id; use 'kind:key'"))
+                continue
+            if (tk, tkey) == (kind, ctx.key_of(kind, item)):
+                out.append(Finding("contradicts_ref", _id, Verdict.BLOCK,
+                                   "contradicts itself"))
+                continue
+            if (tk, tkey) not in ctx.existing and tkey not in ctx.pending_keys(tk):
+                out.append(Finding("contradicts_ref", _id, Verdict.BLOCK,
+                                   f"contradicts '{t}', which does not exist"))
+    return out
+
+
+# The kernel's own rules: what is true of ANY governed graph. Domain rules are
+# declared in the schema (`checks:`) and appended — see kgg/plugins.py.
+CORE_CHECKS = [
     ("date_format", check_date_format),
     ("unknown_kind", check_unknown_kind),
     ("key_present", check_key_present),
@@ -287,16 +446,27 @@ CHECK_REGISTRY = [
     ("vocab_membership", check_vocab_membership),
     ("key_unique_in_file", check_key_unique_in_file),
     ("refs_exist", check_refs_exist),
+    ("contradicts_ref", check_contradicts_ref),
     ("implicit_create_guard", check_implicit_create_guard),
     ("collision", check_collision),
     ("protected_guard", check_protected_guard),
     ("unmapped_review", check_unmapped_review),
+    ("unmapped_gap_named", check_unmapped_gap_named),
 ]
 
+# Back-compat alias — CORE_CHECKS is the name to use.
+CHECK_REGISTRY = CORE_CHECKS
 
-def run_checks(ctx: PlanContext) -> list[Finding]:
-    findings = []
-    for _name, fn in CHECK_REGISTRY:
+
+def run_checks(ctx: PlanContext, extra=None) -> list[Finding]:
+    """Normalise, then run the core registry, then any domain registries.
+
+    Domain checks run last so a domain rule sees items whose synonyms have
+    already been folded, and so a core BLOCK is never masked by a domain check
+    raising an error on a malformed item the kernel would have rejected anyway.
+    """
+    findings = list(normalize_vocab(ctx))
+    for _name, fn in list(CORE_CHECKS) + list(extra or []):
         findings.extend(fn(ctx))
     return findings
 
@@ -334,29 +504,69 @@ def _hint(findings: list[Finding], _id: str) -> str | None:
     return None
 
 
+def _apply_vocab_replacements(findings: list[Finding], _id: str, item: dict) -> list[str]:
+    """Rewrite a deprecated term onto its replacement, once approved.
+
+    Deferred to approval on purpose: a rename is a policy change, and a gate that
+    quietly rewrote the writer's term would hide the fact that the vocabulary
+    moved under them.
+    """
+    notes = []
+    for f in findings:
+        if f.target != _id or "vocab_replace" not in f.data:
+            continue
+        fieldname, old, new = f.data["vocab_replace"]
+        if new and new != old:
+            item[fieldname] = new
+            notes.append(f"{fieldname} '{old}' -> '{new}'")
+    return notes
+
+
 def resolve_actions(ctx: PlanContext, findings: list[Finding],
                     approvals: set | None = None, approve_all: bool = False) -> list[ItemPlan]:
     """Turn findings into one ItemPlan per writable item. `approvals` is a set of iids."""
     approvals = approvals or set()
+
+    # A run-level finding is a floor under EVERY item. Without this a check that
+    # condemns the whole file — a malformed date, a bad top-level field — is
+    # recorded in the proposal and then blocks nothing, because item verdicts are
+    # matched by target and no item's target is RUN. The file is suspect, so
+    # nothing from it is trusted.
+    run_findings = [f for f in findings if f.target == RUN]
+    run_verdict = worst(run_findings)
+    run_why = "; ".join(f.message for f in run_findings
+                        if f.verdict >= Verdict.REQUIRE_APPROVAL)
+
     plans = []
     for section, kind, item in ctx.sections():
         key = ctx.key_of(kind, item) or "?"
         _id = iid(kind, key)
-        verdict = item_verdict(findings, _id)
+        verdict = max(item_verdict(findings, _id), run_verdict)
         hint = _hint(findings, _id)
         approved = approve_all or _id in approvals
         item_findings = [f for f in findings if f.target == _id]
 
         if verdict >= Verdict.BLOCK:
-            action, detail = BLOCKED, ("run HALT" if verdict == Verdict.HALT else "failed a blocking check")
+            if verdict == Verdict.HALT:
+                detail = "run HALT"
+            elif item_verdict(findings, _id) < Verdict.BLOCK:
+                detail = f"blocked by a run-level check: {run_why}"
+            else:
+                detail = "failed a blocking check"
+            action = BLOCKED
         elif verdict == Verdict.REQUIRE_APPROVAL:
             if approved:
+                renames = _apply_vocab_replacements(item_findings, _id, item)
                 if hint == "unmapped":
                     action, detail = CREATE_UNMAPPED, "approved (unmapped)"
                 elif hint == "conflict":
                     action, detail = SUPERSEDE, "approved (supersede prior belief)"
+                elif (kind, key) in ctx.existing:
+                    action, detail = UNCHANGED, "approved; already present"
                 else:
                     action, detail = CREATE, "approved"
+                if renames:
+                    detail += " [deprecated term rewritten: " + "; ".join(renames) + "]"
             else:
                 action, detail = HELD, "awaiting approval"
         else:  # ALLOW

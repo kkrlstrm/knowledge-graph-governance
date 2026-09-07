@@ -1,0 +1,47 @@
+case: provenance_joins_to_audit
+guarantee: provenance
+title: "Every node names the run that wrote it, and that run resolves to an audit entry"
+# README claim: "Provenance — owner + run id + timestamp on every node."
+# The claim only pays off if the run id RESOLVES. A node stamped with a run that
+# has no audit entry is provenance-shaped text, not provenance, and `kgg explain`
+# reports that as `unverified` rather than showing the stamp and moving on.
+
+files:
+  seed: |
+    scope: Northwind
+    source: Q3 discovery calls
+    date: 2026-07-03
+    declare:
+      entity: [{name: Acme Robotics}]
+      persona: [{name: Chief Revenue Officer}]
+    nodes:
+      insight:
+        - tag: acme_new_cro
+          category: signal.new_hire
+          statement: "New CRO at Acme — first 60 days."
+          entities: [Acme Robotics]
+          personas: [Chief Revenue Officer]
+          evidence_strength: 5
+
+steps:
+  - ingest: {file: seed, apply: true, owner: kai}
+  - explain: {id: "insight:acme_new_cro"}
+    expect:
+      exists: true
+      integrity: verified
+      audit_entry_found: true
+      integrity_reason_contains: "intact chain"
+
+  # Declared prerequisite nodes carry provenance too — an account is not exempt
+  # from having an origin just because it was cheap to create.
+  - explain: {id: "entity:Acme Robotics"}
+    expect: {exists: true, integrity: verified}
+
+  # Break the log AT the entry this node points at. The node is untouched and
+  # still looks perfectly healthy; the read refuses to call it verified.
+  - tamper: {how: edit_payload, line: 1}
+  - explain: {id: "insight:acme_new_cro"}
+    expect:
+      exists: true
+      integrity: invalidated
+      integrity_reason_contains: "at or before this node's entry"

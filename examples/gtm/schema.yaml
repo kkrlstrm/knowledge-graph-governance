@@ -18,6 +18,14 @@ node_kinds:
     vocab_fields:
       category: gtm_taxonomy    # must be a controlled term (null -> held as unmapped)
     content_fields: [statement, evidence_strength]   # compared for supersession
+    claim_field: statement      # the text a contradiction detector reads
+    claim_slot: [entities, personas, category]
+    # What an insight is a claim ABOUT: this account, this buyer role, this
+    # mechanic. Two ACTIVE insights sharing that slot are competing claims —
+    # candidates for the contradiction ledger, which holds both and picks
+    # neither. Sharing a slot is necessary and nowhere near sufficient: a
+    # detector must also fire, or every second observation about one account
+    # would register as a disagreement.
     supersedable: true
     refs:
       entities: entity          # each value must resolve to a declared entity

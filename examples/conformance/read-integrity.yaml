@@ -1,0 +1,40 @@
+case: read_integrity_three_states
+guarantee: read-integrity
+title: "Integrity is verified / unverified / invalidated — never a boolean"
+# `kgg explain` distinguishes "checked and sound" from "could not be checked"
+# from "checked and broken". Collapsing the middle state into either neighbour is
+# the failure: reported as fine, an unexamined node is acted on; reported as
+# broken, a legitimately un-audited import gets thrown away.
+
+files:
+  seed: |
+    scope: Northwind
+    source: conformance
+    date: 2026-07-03
+    declare: {entity: [{name: Acme Robotics}]}
+    nodes:
+      insight:
+        - tag: solid
+          category: signal.new_hire
+          statement: "Written through the gate, with an audit entry."
+          entities: [Acme Robotics]
+          evidence_strength: 4
+
+steps:
+  - ingest: {file: seed, apply: true}
+  - explain: {id: "insight:solid"}
+    expect: {integrity: verified}
+
+  # A node that does not exist is invalidated, not "verified with no data".
+  - explain: {id: "insight:never_written"}
+    expect: {exists: false, integrity: invalidated, integrity_reason_contains: "does not exist"}
+
+  # Break the chain AFTER this node's entry. The node's own provenance still
+  # verifies, but the log as a whole does not — that is `unverified`, and saying
+  # `verified` here would overstate what was actually checked.
+  - ingest: {file: seed, apply: true}
+  - tamper: {how: append_forged}
+  - explain: {id: "insight:solid"}
+    expect:
+      integrity: unverified
+      integrity_reason_contains: "broken later in the log"
